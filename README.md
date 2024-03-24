@@ -19,9 +19,9 @@ The specific versions have been used for testing the module. It is highly probab
 - `statsmodels==0.14.1`
 
 ## Usage
-Just place `color_code_stim.py` in your desired directory and import it.
+Just place [color_code_stim.py](color_code_stim.py) in your desired directory and import it.
 
-See the Getting Started Notebook.
+See the [Getting Started Notebook](getting_started.ipynb).
 
 ## Citation
 Paper in preparation.
