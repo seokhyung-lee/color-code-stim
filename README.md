@@ -26,7 +26,7 @@ See the Getting Started Notebook.
 Paper in preparation.
 
 ## License
-color-code-stim is distributed under the MIT license. Please see the LICENSE file for more details.
+It is distributed under the MIT license. Please see the LICENSE file for more details.
 
 ## Acknowledgements
 This work is supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009, by DARPA via project number HR001122C0101, and by the ARO under Grant Number: W911NF-21-1-0007.
