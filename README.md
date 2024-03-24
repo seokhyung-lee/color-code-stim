@@ -10,6 +10,7 @@ The paper on the Concatenated MWPM Decoder is now in preparation and will be upl
 
 ## Requirements
 The specific versions have been used for testing the module. It is highly probable that newer versions will perform equally well.
+- Python v3.9.16
 - `numpy==1.23.5`
 - `matplotlib==3.7.1`
 - `stim==1.12.0`
