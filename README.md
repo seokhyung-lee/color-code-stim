@@ -5,11 +5,11 @@ A small Python module for simulating &amp; decoding color code circuits.
 - **Simulation of color code circuits using [Stim](https://github.com/quantumlib/Stim) library.** <br> 
 It currently supports the logical idling operation of a triangular color code defined in the hexagonal (6-6-6) lattice. The code distance, number of syndrome extraction rounds, and CNOT schedule of the code are adjustable. Bit-flip and circuit-level noise models are supported and individual noise parameters are adjustable.
 - **Implementation of the Concatenated Minimum-Weight Perfect Matching (MWPM) Decoder for color codes.** <br>
-The paper on the Concatenated MWPM Decoder is now in preparation and will be uploaded on arXiv in the near future. The MWPM sub-routines of the decoder are implemented using [PyMatching](https://github.com/oscarhiggott/PyMatching) library.
+The concatenated MWPM decoder is described in arXiv:to_add. The MWPM sub-routines of the decoder are implemented using [PyMatching](https://github.com/oscarhiggott/PyMatching) library.
 - **Easy Monte-Carlo simulation to evaluate the decoder performance.** <br>
 
 ## Requirements
-The specific versions have been used for testing the module. It is highly probable that newer versions will perform equally well.
+These specific versions have been used for testing the module. It is highly probable that newer versions will perform equally well.
 - Python 3.9.16
 - `numpy==1.23.5`
 - `matplotlib==3.7.1`
