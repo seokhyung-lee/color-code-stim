@@ -1,4 +1,4 @@
-# color-code-stim
+# color_code_stim
 A small Python module for simulating &amp; decoding color code circuits.
 
 ## Features
