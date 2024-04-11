@@ -27,7 +27,7 @@ See the [Getting Started Notebook](getting_started.ipynb).
 Paper in preparation.
 
 ## License
-It is distributed under the MIT license. Please see the LICENSE file for more details.
+This module is distributed under the MIT license. Please see the LICENSE file for more details.
 
 ## Acknowledgements
-This work is supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009, by DARPA via project number HR001122C0101, and by the ARO under Grant Number: W911NF-21-1-0007.
+This work is supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009. This article is based upon work supported by the Defense Advanced Research Projects Agency (DARPA) under Contract No. HR001122C0063.
