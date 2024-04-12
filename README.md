@@ -42,4 +42,4 @@ If you want to cite this module in an academic work, please cite the arXiv prepr
 This module is distributed under the MIT license. Please see the LICENSE file for more details.
 
 ## Acknowledgements
-This work is supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009. This article is based upon work supported by the Defense Advanced Research Projects Agency (DARPA) under Contract No. HR001122C0063.
+This module is based upon work supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009 and by the Defense Advanced Research Projects Agency (DARPA) under Contract No. HR001122C0063.
