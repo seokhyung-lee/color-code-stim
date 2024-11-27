@@ -1,6 +1,8 @@
 # color-code-stim
 A small Python module for simulating &amp; decoding 2D color code circuits.
 
+**Note**: _See also [ConcatMatching](https://github.com/seokhyung-lee/ConcatMatching) if you want to input your check matrix directly to the decoder instead of using pre-defined color code circuits._
+
 ## Features
 - **Simulation of 2D color code circuits using [Stim](https://github.com/quantumlib/Stim) library.** <br> 
 It currently supports the logical idling operation of a 2D triangular color code defined in the hexagonal (6-6-6) lattice. The code distance, number of syndrome extraction rounds, and CNOT schedule of the code are adjustable. Bit-flip and circuit-level noise models are supported and individual noise parameters are adjustable.
