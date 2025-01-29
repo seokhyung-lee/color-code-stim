@@ -7,7 +7,7 @@ A small Python module for simulating &amp; decoding 2D color code circuits.
 - **Simulation of 2D color code circuits using [Stim](https://github.com/quantumlib/Stim) library.** <br> 
 It currently supports the logical idling operation of a 2D triangular color code defined in the hexagonal (6-6-6) lattice. The code distance, number of syndrome extraction rounds, and CNOT schedule of the code are adjustable. Bit-flip and circuit-level noise models are supported and individual noise parameters are adjustable.
 - **Implementation of the Concatenated Minimum-Weight Perfect Matching (MWPM) Decoder for color codes.** <br>
-The concatenated MWPM decoder is a decoder for color codes that functions by concatenation of two MWPM decoders per color, for a total of six matchings. See [arXiv:2404.07482](https://arxiv.org/abs/2404.07482) for more details. The MWPM sub-routines of the decoder are implemented using [PyMatching](https://github.com/oscarhiggott/PyMatching) library.
+The concatenated MWPM decoder is a decoder for color codes that functions by concatenation of two MWPM decoders per color, for a total of six matchings. See [Quantum 9, 1609 (2025)](https://doi.org/10.22331/q-2025-01-27-1609) for more details. The MWPM sub-routines of the decoder are implemented using [PyMatching](https://github.com/oscarhiggott/PyMatching) library.
 - **Easy Monte-Carlo simulation to evaluate the decoder performance.** <br>
 
 ## Requirements
@@ -26,17 +26,21 @@ Just place [color_code_stim.py](color_code_stim.py) in your desired directory an
 See the [Getting Started Notebook](getting_started.ipynb).
 
 ## Citation
-If you want to cite this module in an academic work, please cite the arXiv preprint:
+If you want to cite this module in an academic work, please cite the [paper](https://doi.org/10.22331/q-2025-01-27-1609):
 
 ```
-@misc{lee2024color,
-      title={Color code decoder with improved scaling for correcting circuit-level noise}, 
-      author={Seok-Hyung Lee and Andrew Li and Stephen D. Bartlett},
-      year={2024},
-      eprint={2404.07482},
-      archivePrefix={arXiv},
-      primaryClass={quant-ph},
-      url={https://arxiv.org/abs/2404.07482}
+@article{lee2025color,
+  doi = {10.22331/q-2025-01-27-1609},
+  url = {https://doi.org/10.22331/q-2025-01-27-1609},
+  title = {Color code decoder with improved scaling for correcting circuit-level noise},
+  author = {Lee, Seok-Hyung and Li, Andrew and Bartlett, Stephen D.},
+  journal = {{Quantum}},
+  issn = {2521-327X},
+  publisher = {{Verein zur F{\"{o}}rderung des Open Access Publizierens in den Quantenwissenschaften}},
+  volume = {9},
+  pages = {1609},
+  month = jan,
+  year = {2025}
 }
 ```
 
