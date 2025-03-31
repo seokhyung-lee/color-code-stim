@@ -29,7 +29,7 @@ dependencies = {file = ["requirements.txt"]}
 "Bug Tracker" = "https://github.com/seokhyung-lee/color-code-stim/issues"
 
 [tool.setuptools]
-package-dir = {"" = "."}
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
