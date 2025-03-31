@@ -19,21 +19,17 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-dependencies = [
-    "numpy>=1.23.5",
-    "matplotlib>=3.7.1",
-    "stim>=1.12.0",
-    "pymatching>=2.1.0",
-    "python-igraph>=0.11.3",
-    "statsmodels>=0.14.1",
-]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [project.urls]
 "Homepage" = "https://github.com/seokhyung-lee/color-code-stim"
 "Bug Tracker" = "https://github.com/seokhyung-lee/color-code-stim/issues"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
 where = ["src"]
