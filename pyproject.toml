@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "color-code-stim"
+version = "0.1.0"
+authors = [
+    {name = "Seok-Hyung Lee", email = "sh.lee1524@gmail.com"},
+]
+description = "A small Python module for simulating & decoding 2D color code circuits"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.23.5",
+    "matplotlib>=3.7.1",
+    "stim>=1.12.0",
+    "pymatching>=2.1.0",
+    "python-igraph>=0.11.3",
+    "statsmodels>=0.14.1",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/seokhyung-lee/color-code-stim"
+"Bug Tracker" = "https://github.com/seokhyung-lee/color-code-stim/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest]
+testpaths = ["tests"] 
