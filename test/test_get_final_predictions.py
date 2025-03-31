@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.utils import _get_final_predictions
+from src.color_code_stim import _get_final_predictions
 
 # --- Create Sample Data ---
 # N = 3 (number of primary elements)

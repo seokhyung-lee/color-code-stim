@@ -10,25 +10,22 @@ It currently supports the logical idling operation of a 2D triangular color code
 The concatenated MWPM decoder is a decoder for color codes that functions by concatenation of two MWPM decoders per color, for a total of six matchings. See [Quantum 9, 1609 (2025)](https://doi.org/10.22331/q-2025-01-27-1609) for more details. The MWPM sub-routines of the decoder are implemented using [PyMatching](https://github.com/oscarhiggott/PyMatching) library.
 - **Easy Monte-Carlo simulation to evaluate the decoder performance.** <br>
 
-## Requirements
-These specific versions have been used for testing the module. It is highly probable that newer versions will perform equally well.
-- Python 3.9.16
-- `numpy==1.23.5`
-- `matplotlib==3.7.1`
-- `stim==1.12.0`
-- `pymatching==2.1.0`
-- `python-igraph==0.11.3`
-- `statsmodels==0.14.1`
+## Install
+
+Requires Python >= 3.11
+
+```bash
+pip install git+https://github.com/seokhyung-lee/color-code-stim.git
+```
 
 ## Usage
-Just place [color_code_stim.py](color_code_stim.py) in your desired directory and import it.
 
 See the [Getting Started Notebook](getting_started.ipynb).
 
 ## Citation
 If you want to cite this module in an academic work, please cite the [paper](https://doi.org/10.22331/q-2025-01-27-1609):
 
-```
+```bibtex
 @article{lee2025color,
   doi = {10.22331/q-2025-01-27-1609},
   url = {https://doi.org/10.22331/q-2025-01-27-1609},
