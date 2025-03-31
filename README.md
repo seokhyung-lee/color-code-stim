@@ -1,5 +1,5 @@
 # color-code-stim
-A small Python module for simulating &amp; decoding 2D color code circuits.
+Python package for simulating &amp; decoding 2D color code circuits.
 
 **Note**: _See also [ConcatMatching](https://github.com/seokhyung-lee/ConcatMatching) if you want to input your check matrix directly to the decoder instead of using pre-defined color code circuits._
 
