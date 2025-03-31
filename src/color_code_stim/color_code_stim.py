@@ -1,20 +1,14 @@
+import itertools
 import math
 import time
-import itertools
-import io
-import re
-from functools import wraps
 from typing import (
-    Callable,
     Dict,
-    Iterable,
     List,
-    Set,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     Union,
-    Self,
 )
 
 import igraph as ig
@@ -22,196 +16,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pymatching
 import stim
+from ldpc import BpDecoder
 from matplotlib.ticker import AutoLocator
 from statsmodels.stats.proportion import proportion_confint
-from ldpc import BpDecoder
-from scipy.sparse import csc_matrix
-from dataclasses import dataclass
-from copy import deepcopy
 
-
-def timeit(func: Callable):
-    @wraps(func)
-    def wrap(*args, **kwargs):
-        if args[0].benchmarking:
-            start = time.time()
-            res = func(*args, **kwargs)
-            elapsed = time.time() - start
-            print(f"Elapsed time for function '{func.__name__}': {elapsed:.2e} s")
-        else:
-            res = func(*args, **kwargs)
-        return res
-
-    return wrap
-
-
-def get_pfail(shots, fails, alpha=0.01, confint_method="wilson"):
-    """
-    Calculate the failure probability and confidence interval.
-
-    This function computes the estimated failure probability and the half-width
-    of its confidence interval based on the number of shots and failures.
-
-    Parameters
-    ----------
-    shots : int or array-like
-        Total number of experimental shots.
-    fails : int or array-like
-        Number of failures observed.
-    alpha : float, default 0.01
-        Significance level for the confidence interval (e.g., 0.01 for 99% confidence).
-    confint_method : str, default "wilson"
-        Method to calculate confidence intervals. See statsmodels.stats.proportion.proportion_confint
-        for available options.
-
-    Returns
-    -------
-    pfail : float or array-like
-        Estimated failure probability (midpoint of confidence interval).
-    delta_pfail : float or array-like
-        Half-width of the confidence interval.
-    """
-    pfail_low, pfail_high = proportion_confint(
-        fails, shots, alpha=alpha, method=confint_method
-    )
-    pfail = (pfail_low + pfail_high) / 2
-    delta_pfail = pfail_high - pfail
-
-    return pfail, delta_pfail
-
-
-class ErrorMechanismSymbolic:
-    prob_vars: np.ndarray
-    prob_muls: np.ndarray
-    dets: Set[stim.DemTarget]
-    obss: Set[stim.DemTarget]
-
-    def __init__(
-        self,
-        prob_vars: Iterable[int],
-        dets: Iterable[stim.DemTarget],
-        obss: Iterable[stim.DemTarget],
-        prob_muls: Iterable[float] | int | float = 1,
-    ):
-        prob_vars = np.asarray(prob_vars, dtype="int32")
-        prob_muls = np.asarray(prob_muls)
-        if prob_muls.ndim == 0:
-            prob_muls = np.full_like(prob_vars, prob_muls)
-
-        self.prob_vars = prob_vars
-        self.prob_muls = prob_muls
-        self.dets = set(dets)
-        self.obss = set(obss)
-
-
-class DemSymbolic:
-    ems: List[ErrorMechanismSymbolic]
-    dets_org: stim.DetectorErrorModel
-
-    def __init__(
-        self,
-        prob_vars: Iterable[Iterable[int]],
-        dets: Iterable[Iterable[stim.DemTarget]],
-        obss: Iterable[Iterable[stim.DemTarget]],
-        dets_org: stim.DetectorErrorModel,
-    ):
-        self.ems = [
-            ErrorMechanismSymbolic(*prms) for prms in zip(prob_vars, dets, obss)
-        ]
-        self.dets_org = dets_org
-
-    def to_dem(self, prob_vals: Iterable[float], sort=False):
-        prob_vals = np.asarray(prob_vals, dtype="float64")
-
-        probs = [
-            (1 - np.prod(1 - 2 * em.prob_muls * prob_vals[em.prob_vars])) / 2
-            for em in self.ems
-        ]
-
-        if sort:
-            inds = np.argsort(probs)[::-1]
-        else:
-            inds = range(len(probs))
-
-        dem = stim.DetectorErrorModel()
-        for i in inds:
-            em = self.ems[i]
-            targets = em.dets | em.obss
-            dem.append("error", probs[i], list(targets))
-
-        dem += self.dets_org
-
-        return dem
-
-    def non_edge_like_errors_exist(self):
-        for e in self.ems:
-            if len(e.dets) > 2:
-                return True
-        return False
-
-    def decompose_complex_error_mechanisms(self):
-        """
-        For each error mechanism `e` in `dem` that involves more than two detectors,
-        searches for candidate pairs (e1, e2) among the other error mechanisms (with e1, e2 disjoint)
-        such that:
-        - e1.dets ∪ e2.dets equals e.dets, and e1.dets ∩ e2.dets is empty.
-        - e1.obss ∪ e2.obss equals e.obss, and e1.obss ∩ e2.obss is empty.
-
-        For each valid candidate pair, updates both e1 and e2 by concatenating e’s
-        probability variable and multiplier arrays. If there are multiple candidate pairs,
-        the probability multipliers from e are split equally among the pairs.
-
-        Finally, removes the complex error mechanism `e` from `dem.ems`.
-
-        Raises:
-            ValueError: If a complex error mechanism cannot be decomposed.
-        """
-        # Iterate over a copy of the error mechanisms list
-        em_inds_to_remove = []
-        for i_e, e in enumerate(self.ems):
-            # Process only error mechanisms that involve more than 2 detectors.
-            if len(e.dets) > 2:
-                candidate_pairs = []
-                # Search for candidate pairs among the other error mechanisms.
-                for i, e1 in enumerate(self.ems):
-                    if i == i_e or i in em_inds_to_remove:
-                        continue
-                    for j in range(i + 1, len(self.ems)):
-                        if j == i_e or j in em_inds_to_remove:
-                            continue
-                        e2 = self.ems[j]
-                        # Check that e1 and e2 have disjoint detectors and observables.
-                        if e1.dets & e2.dets:
-                            continue
-                        if e1.obss & e2.obss:
-                            continue
-                        # Check that the union of their detectors and observables equals e’s.
-                        if (e1.dets | e2.dets == e.dets) and (
-                            e1.obss | e2.obss == e.obss
-                        ):
-                            candidate_pairs.append((e1, e2))
-                if not candidate_pairs:
-                    raise ValueError(
-                        f"No valid decomposition found for error mechanism with dets {e.dets} and obss {e.obss}."
-                    )
-                # If there are multiple decompositions, split the probability equally.
-                fraction = 1 / len(candidate_pairs)
-                for e1, e2 in candidate_pairs:
-                    # Append the probability variable arrays.
-                    e1.prob_vars = np.concatenate([e1.prob_vars, e.prob_vars])
-                    e2.prob_vars = np.concatenate([e2.prob_vars, e.prob_vars])
-                    # Append the probability multiplier arrays, scaling by the fraction.
-                    e1.prob_muls = np.concatenate(
-                        [e1.prob_muls, e.prob_muls * fraction]
-                    )
-                    e2.prob_muls = np.concatenate(
-                        [e2.prob_muls, e.prob_muls * fraction]
-                    )
-                # Remove the complex error mechanism from the model.
-                em_inds_to_remove.append(i_e)
-
-            for i_e in em_inds_to_remove[::-1]:
-                self.ems.pop(i_e)
+from .stim_symbolic import DemSymbolic
+from .stim_utils import dem_to_parity_check, remove_obs_from_dem
+from .utils import _get_final_predictions, get_pfail, timeit
 
 
 class ColorCode:
@@ -230,7 +41,7 @@ class ColorCode:
         rounds: int,
         shape: str = "tri",
         d2: int = None,
-        cnot_schedule: Union[str, Iterable[int]] = "tri_optimal",
+        cnot_schedule: Union[str, Sequence[int]] = "tri_optimal",
         p_bitflip: float = 0.0,
         p_reset: float = 0.0,
         p_meas: float = 0.0,
@@ -344,7 +155,7 @@ class ColorCode:
             "cnot": p_cnot,
             "idle": p_idle,
         }
-        self.logical_gap = logical_gap
+        self.observables_as_detectors = logical_gap
         if logical_gap and self.shape not in {"tri", "growing"}:
             raise NotImplementedError
         self.use_last_detectors = use_last_detectors
@@ -1012,7 +823,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, get_qubit_coords(anc_Z_qubit) + (0,))
 
             target = [stim.target_rec(ind) for ind in obs_Z_lookback_inds]
-            if self.logical_gap:
+            if self.observables_as_detectors:
                 raise NotImplementedError
             else:
                 circuit.append("OBSERVABLE_INCLUDE", target, 0)
@@ -1049,7 +860,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, get_qubit_coords(anc_X_qubit) + (0,))
 
             target = [stim.target_rec(ind) for ind in obs_X_lookback_inds]
-            if self.logical_gap:
+            if self.observables_as_detectors:
                 raise NotImplementedError
             else:
                 circuit.append("OBSERVABLE_INCLUDE", target, 1)
@@ -1070,10 +881,16 @@ class ColorCode:
                 ]
                 target = [stim.target_rec(ind) for ind in lookback_inds]
                 circuit.append("OBSERVABLE_INCLUDE", target, obs_id)
-                if self.logical_gap:
+                if self.observables_as_detectors:
                     circuit.append("DETECTOR", target, obs_id)
 
-    def draw_tanner_graph(self, ax=None, show_axes=False, show_lattice=False, **kwargs):
+    def draw_tanner_graph(
+        self,
+        ax: Optional[plt.Axes] = None,
+        show_axes: bool = False,
+        show_lattice: bool = False,
+        **kwargs,
+    ) -> plt.Axes:
         """
         Draw the tanner graph of the code.
 
@@ -1118,7 +935,7 @@ class ColorCode:
 
         return ax
 
-    def get_detector(self, detector_id):
+    def get_detector(self, detector_id: int) -> Tuple[ig.Vertex, int]:
         """
         Get the ancillary qubit and round corresponding to a detector from a
         given detector ID.
@@ -1142,7 +959,7 @@ class ColorCode:
         color: Literal["r", "g", "b"],
         decompose_non_edge_like_errors: bool = True,
         symbolic: bool = False,
-        benchmarking=False,
+        benchmarking: bool = False,
     ) -> Tuple[
         DemSymbolic | stim.DetectorErrorModel, DemSymbolic | stim.DetectorErrorModel
     ]:
@@ -1415,7 +1232,7 @@ class ColorCode:
             H = bp_inputs["H"]
             p = bp_inputs["p"]
         else:
-            if self.logical_gap:
+            if self.observables_as_detectors:
                 dem = remove_obs_from_dem(self.org_dem)
             else:
                 dem = self.org_dem
@@ -1448,22 +1265,25 @@ class ColorCode:
     def decode(
         self,
         detector_outcomes: np.ndarray,
-        dems: Dict[
-            Literal[
-                "r",
-                "g",
-                "b",
-            ],
-            Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel],
-        ]
-        | None = None,
+        dems: (
+            Dict[
+                Literal[
+                    "r",
+                    "g",
+                    "b",
+                ],
+                Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel],
+            ]
+            | None
+        ) = None,
         colors: str | List[str] = "all",
-        logical_value: int | Iterable[int] | None = None,
+        logical_value: int | Sequence[int] | None = None,
         bp_predecoding: bool = False,
         bp_prms: dict | None = None,
+        erasure_matcher_predecoding: bool = False,
         full_output: bool = False,
         verbose: bool = False,
-    ):
+    ) -> np.ndarray | Tuple[np.ndarray, dict]:
         """
         Decode given detector outcomes using given decomposed DEMs.
 
@@ -1474,15 +1294,22 @@ class ColorCode:
             and each column corresponds to a detector. detector_outcomes[i, j]
             is True if and only if the detector with id j in the ith sample has
             the outcome −1.
-        dems : dict with keys of {'r', 'g', 'b'}
+        dems : dict with keys of {'r', 'g', 'b'} or None, default None
             Decomposed DEMs. dems['r'] = (dem1, dem2), which are the
             red-restricted and red-only DEMs, and similarly for the other
             colors.
-        logical_value : int | Iterable[int] | None, default None
+        colors : str | List[str], default 'all'
+            Colors to use for decoding. Can be 'all', one of {'r', 'g', 'b'},
+            or a list containing any combination of {'r', 'g', 'b'}.
+        logical_value : int | Sequence[int] | None, default None
             Logical value(s) to use for decoding. If None, all possible logical values
             will be tried and the one with minimum weight will be selected.
         bp_predecoding : bool, default False
             Whether to use belief propagation as a pre-decoding step.
+        bp_prms : dict, default None
+            Parameters for the belief propagation decoder.
+        erasure_matcher_predecoding : bool, default False
+            Whether to use erasure matcher as a pre-decoding step.
         full_output : bool, default False
             Whether to return additional information about the decoding process.
         verbose : bool, default False
@@ -1496,14 +1323,20 @@ class ColorCode:
             if the j-th observable (j=0 when 1D) of the i-th sample is
             predicted to be -1.
         extra_outputs : dict, only when full_output is True
-            Dictionary containing additional information about the decoding process,
-            including 'weight' and 'best_color'.
+            Dictionary containing additional decoding results.
         """
+
+        if erasure_matcher_predecoding:
+            assert self.observables_as_detectors
 
         if colors == "all":
             colors = ["r", "g", "b"]
         elif colors in ["r", "g", "b"]:
             colors = [colors]
+
+        num_obs = self.num_obs
+
+        all_logical_values = np.array(list(itertools.product([0, 1], repeat=num_obs)))
 
         if bp_predecoding:
             if bp_prms is None:
@@ -1512,12 +1345,10 @@ class ColorCode:
             bp_probs = 1 / (1 + np.exp(llrs))
             eps = 1e-14
             bp_probs = bp_probs.clip(eps, 1 - eps)
-            # print(llrs[583, :])
-            # print(bp_probs[583, :])
-            # print(converges[583])
+
             preds_obs = []
             extra_outputs = {}
-            for det_outcomes_sng, bp_probs_sng in zip(detector_outcomes, bp_probs):
+            for det_outcomes_sng in detector_outcomes:
                 dems = {}
                 for c in colors:
                     dem1_sym, dem2_sym = self.decompose_detector_error_model(
@@ -1553,138 +1384,87 @@ class ColorCode:
             else:
                 return preds_obs
 
-        if self.logical_gap:
-            detector_outcomes = detector_outcomes.copy()
-
-            num_obs = self.num_obs
-            if logical_value is None:
-                all_logical_values = np.array(
-                    list(itertools.product([0, 1], repeat=num_obs))
-                )
-                weights = []
-                best_colors = []
-                for logical_value in all_logical_values:
-                    if len(logical_value) == 1:
-                        logical_value = logical_value[0]
-
-                    if verbose:
-                        print("Logical values =", logical_value)
-
-                    _, outputs = self.decode(
-                        detector_outcomes,
-                        dems=dems,
-                        colors=colors,
-                        logical_value=logical_value,
-                        full_output=True,
-                        verbose=verbose,
-                    )
-                    weights.append(outputs["weight"])
-                    best_colors.append(outputs["best_color"])
-
-                weights = np.stack(weights, axis=0)
-                best_colors = np.stack(best_colors, axis=0)
-
-                # Combining to get both min indices and sorted weights efficiently
-                inds_min_weight = np.argmin(weights, axis=0)
-                column_inds = np.arange(weights.shape[1])
-                min_weights = weights[inds_min_weight, column_inds]
-                # min_weights = np.take_along_axis(
-                #     weights, inds_min_weight.reshape(1, -1), axis=0
-                # ).squeeze(0)
-
-                # Find second smallest by temporarily replacing the minimum with a large value
-                weights_copy = weights.copy()
-                weights_copy[inds_min_weight, column_inds] = np.inf
-                second_min_weights = np.min(weights_copy, axis=0)
-
-                # Calculate logical gap and set prediction results
-                logical_gap = second_min_weights - min_weights
-                preds_obs = all_logical_values[inds_min_weight, :]
-                preds_obs = preds_obs.astype("bool")
-                if preds_obs.shape[1] == 1:
-                    preds_obs = preds_obs.ravel()
-
-                # Get best colors
-                best_colors = np.take_along_axis(
-                    best_colors, inds_min_weight.reshape(1, -1), axis=0
-                ).squeeze(0)
-
-                extra_outputs = {
-                    "weight": min_weights,
-                    "best_color": best_colors,
-                    "logical_gap": logical_gap,
-                }
-
-                if full_output:
-                    return preds_obs, extra_outputs
-                else:
-                    return preds_obs
-
-            else:
-                if num_obs == 1:
-                    detector_outcomes[:, -1] = logical_value
-                else:
-                    detector_outcomes[:, -num_obs] = logical_value
-
         if dems is None:
             dems = {c: self.decompose_detector_error_model(c) for c in colors}
 
-        preds_obs = None
-        weights = None
-        best_colors = None
-        all_colors = {}
-        for c, dems_color in dems.items():
-            dem1, dem2 = dems_color
-            if verbose:
-                print(f"color {c}, step-1 decoding..")
-            preds_dem1 = self._decode_dem1(dem1, detector_outcomes, c)
-            if verbose:
-                print(f"color {c}, step-2 decoding..")
-            preds_obs_new, weights_new = self._decode_dem2(
-                dem2, detector_outcomes, preds_dem1, c
-            )
-            del preds_dem1
+        # First round
+        preds_dem1_all = []
+        num_logical_value_combs = (
+            len(all_logical_values)
+            if self.observables_as_detectors and logical_value is None
+            else 1
+        )
+        for i in range(num_logical_value_combs):
+            preds_dem1_all.append({})
+            for c, (dem1, _) in dems.items():
+                if verbose:
+                    print(f"color {c}, step-1 decoding for logical value {i}..")
+                if self.observables_as_detectors:
+                    detector_outcomes_copy = detector_outcomes.copy()
+                    if logical_value is not None:
+                        detector_outcomes_copy[:, -num_obs:] = logical_value
+                    else:
+                        detector_outcomes_copy[:, -num_obs:] = all_logical_values[i]
+                    preds_dem1_all[i][c] = self._decode_dem1(
+                        dem1, detector_outcomes_copy, c
+                    )
+                else:
+                    preds_dem1_all[i][c] = self._decode_dem1(dem1, detector_outcomes, c)
 
-            if verbose:
-                print(f"color {c}, postprocessing..")
+        # Second round
+        preds_obs = []
+        weights = []
+        for i in range(len(preds_dem1_all)):
+            preds_obs.append({})
+            weights.append({})
 
-            all_colors[c] = (preds_obs_new, weights_new)
+            for c, (_, dem2) in dems.items():
+                if verbose:
+                    print(f"color {c}, step-2 decoding for logical value {i}..")
 
-            if preds_obs is None:
-                preds_obs = preds_obs_new
-                weights = weights_new
-                if full_output:
-                    best_colors = np.chararray(preds_obs.size)
-                    best_colors[:] = c
+                if self.observables_as_detectors:
+                    detector_outcomes_copy = detector_outcomes.copy()
+                    if logical_value is not None:
+                        detector_outcomes_copy[:, -num_obs:] = logical_value
+                    else:
+                        detector_outcomes_copy[:, -num_obs:] = all_logical_values[i]
+                    preds_obs_new, weights_new = self._decode_dem2(
+                        dem2, detector_outcomes_copy, preds_dem1_all[i][c], c
+                    )
+                else:
+                    preds_obs_new, weights_new = self._decode_dem2(
+                        dem2, detector_outcomes, preds_dem1_all[i][c], c
+                    )
 
-            else:
-                cond = weights_new < weights
-                preds_obs = np.where(cond.reshape(-1, 1), preds_obs_new, preds_obs)
-                del preds_obs_new
-                weights = np.where(cond, weights_new, weights)
-                del weights_new
-                if full_output:
-                    best_colors = np.where(cond, c, best_colors)
-                del cond
+                preds_obs[i][c] = preds_obs_new
+                weights[i][c] = weights_new
 
-        preds_obs = preds_obs.astype("bool")
-        if preds_obs.shape[1] == 1:
-            preds_obs = preds_obs.ravel()
+        # Obtain best prediction for each logical value combination
+        preds_obs_final, best_colors, weights_final, logical_gaps = (
+            _get_final_predictions(preds_obs, weights)
+        )
 
-        extra_outputs = {}
+        if preds_obs_final.shape[1] == 1:
+            preds_obs_final = preds_obs_final.ravel()
+
         if full_output:
-            extra_outputs["best_color"] = best_colors
-            extra_outputs["weight"] = weights
-            for c, outputs_color in all_colors.items():
-                extra_outputs[f"preds_{c}"] = outputs_color[0]
-                extra_outputs[f"weights_{c}"] = outputs_color[1]
+            extra_outputs = {
+                "best_colors": best_colors,
+                "weights": weights_final,
+            }
+            if len(preds_obs) > 1:
+                extra_outputs["logical_gaps"] = logical_gaps
+                extra_outputs["logical_values"] = all_logical_values
+                extra_outputs["weights_full"] = weights
 
         if full_output:
-            return preds_obs, extra_outputs
+            return preds_obs_final, extra_outputs
         else:
-            return preds_obs
+            return preds_obs_final
 
-    def _decode_dem1(self, dem1, detector_outcomes, color):
+    def _decode_dem1(
+        self, dem1: stim.DetectorErrorModel, detector_outcomes: np.ndarray, color: str
+    ) -> np.ndarray:
         det_outcomes_dem1 = detector_outcomes.copy()
         det_outcomes_dem1[:, self.detector_ids[color]] = False
         matching = pymatching.Matching.from_detector_error_model(dem1)
@@ -1693,7 +1473,13 @@ class ColorCode:
 
         return preds_dem1
 
-    def _decode_dem2(self, dem2, detector_outcomes, preds_dem1, color):
+    def _decode_dem2(
+        self,
+        dem2: stim.DetectorErrorModel,
+        detector_outcomes: np.ndarray,
+        preds_dem1: np.ndarray,
+        color: str,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         det_outcome_dem2 = detector_outcomes.copy()
         mask = np.full_like(det_outcome_dem2, True)
         mask[:, self.detector_ids[color]] = False
@@ -1705,10 +1491,13 @@ class ColorCode:
             det_outcome_dem2, return_weights=True
         )
         del det_outcome_dem2, matching
+
         return preds, weights_new
 
     @timeit
-    def sample(self, shots, seed=None):
+    def sample(
+        self, shots: int, seed: Optional[int] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Sample detector outcomes and observables from the quantum circuit.
 
@@ -1747,7 +1536,7 @@ class ColorCode:
         confint_method: str = "wilson",
         seed: Optional[int] = None,
         verbose: bool = False,
-    ):
+    ) -> np.ndarray | Tuple[np.ndarray, dict]:
         """
         Monte-Carlo simulation of the concatenated MWPM decoder.
 
@@ -1804,15 +1593,15 @@ class ColorCode:
             print("Decoding...")
             time.sleep(1)
 
-        if self.logical_gap:
-            preds, full_output = self.decode(
+        if self.observables_as_detectors:
+            preds, extra_outputs = self.decode(
                 det,
                 verbose=verbose,
                 full_output=True,
                 bp_predecoding=bp_predecoding,
                 bp_prms=bp_prms,
             )
-            logical_gaps = full_output["logical_gap"]
+            logical_gaps = extra_outputs["logical_gaps"]
 
         else:
             preds = self.decode(
@@ -1837,7 +1626,7 @@ class ColorCode:
                 "stats": (pfail, delta_pfail),
                 "fails": fails,
             }
-            if self.logical_gap:
+            if self.observables_as_detectors:
                 extra_outputs["logical_gaps"] = logical_gaps
 
             return num_fails, extra_outputs
@@ -1954,139 +1743,3 @@ class ColorCode:
         for res in self.simulate_target_confint_gen(*args, **kwargs):
             pass
         return res
-
-
-def dem_to_str(dem: stim.DetectorErrorModel) -> str:
-    """
-    Convert a detector error model to its string representation.
-
-    Parameters
-    ----------
-    dem : stim.DetectorErrorModel
-        The detector error model to convert.
-
-    Returns
-    -------
-    str
-        String representation of the detector error model.
-    """
-    buffer = io.StringIO()
-    dem.to_file(buffer)
-    s = buffer.getvalue()
-    return s
-
-
-def str_to_dem(s: str) -> stim.DetectorErrorModel:
-    """
-    Convert a string representation back to a detector error model.
-
-    Parameters
-    ----------
-    s : str
-        String representation of a detector error model.
-
-    Returns
-    -------
-    stim.DetectorErrorModel
-        The reconstructed detector error model.
-    """
-    buffer = io.StringIO(s)
-    return stim.DetectorErrorModel.from_file(buffer)
-
-
-def remove_obs_from_dem(dem: stim.DetectorErrorModel) -> stim.DetectorErrorModel:
-    """
-    Remove detectors acting as observables from a detector error model.
-
-    Parameters
-    ----------
-    dem : stim.DetectorErrorModel
-        The detector error model to process.
-
-    Returns
-    -------
-    stim.DetectorErrorModel
-        A new detector error model with all detectors acting as observables removed.
-    """
-    num_dets = dem.num_detectors
-    num_obss = dem.num_observables
-    s = dem_to_str(dem)
-
-    # Remove last lines corresponding to observables
-    s = "\n".join(s.splitlines()[:-num_obss]) + "\n"
-
-    # Build a regex pattern to match the exact text "D{num_dets - 1}"
-    patterns = [r"\bD" + str(num_dets - num_obss + i) + r"\b" for i in range(num_obss)]
-    # Remove all occurrences of that pattern
-    for pattern in patterns:
-        s = re.sub(pattern, "", s)
-
-    # Clean up extra spaces in each line (e.g. converting "D0  D1  L0" to "D0 D1 L0")
-    s = "\n".join(" ".join(line.split()) for line in s.splitlines())
-
-    return str_to_dem(s)
-
-
-def dem_to_parity_check(dem: stim.DetectorErrorModel):
-    """
-    Convert a detector error model (DEM) into a parity check matrix and probability vector.
-
-    Parameters
-    ----------
-    dem : stim.DetectorErrorModel
-        The detector error model to convert.
-
-    Returns
-    -------
-    H : csc_matrix
-        A binary matrix of shape (number of detectors, number of errors)
-        where H[i, j] = 1 if detector i is involved in error j.
-    p : np.ndarray
-        A 1D numpy array of probabilities corresponding to each error.
-    """
-    lines = dem_to_str(dem).splitlines()
-    probabilities = []
-    error_detector_indices = []
-    max_detector = -1
-
-    for line in lines:
-        if line.startswith("error("):
-            # Extract probability using regex.
-            prob_match = re.search(r"error\(([\d.eE+-]+)\)", line)
-            if not prob_match:
-                continue
-            prob = float(prob_match.group(1))
-            probabilities.append(prob)
-
-            # Tokenize the line and collect detectors (ignore observables starting with 'L')
-            tokens = line.split()
-            detectors = []
-            for token in tokens:
-                if token.startswith("D"):
-                    try:
-                        det = int(token[1:])
-                        detectors.append(det)
-                        max_detector = max(max_detector, det)
-                    except ValueError:
-                        pass
-            error_detector_indices.append(detectors)
-
-    num_errors = len(probabilities)
-    num_detectors = max_detector + 1
-
-    # Build the sparse parity check matrix.
-    rows = []
-    cols = []
-    data = []
-    for col, dets in enumerate(error_detector_indices):
-        for d in dets:
-            rows.append(d)
-            cols.append(col)
-            data.append(1)
-
-    H = csc_matrix(
-        (data, (rows, cols)), shape=(num_detectors, num_errors), dtype=np.int8
-    )
-    p = np.array(probabilities)
-
-    return H, p
