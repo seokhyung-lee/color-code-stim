@@ -1,5 +1,6 @@
 import time
 from functools import wraps
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -235,3 +236,8 @@ def _get_final_predictions(
         logical_gap = partitioned_weights[1, :] - partitioned_weights[0, :]
 
     return preds_obs_final, best_colors, weights_final, logical_gap
+
+
+def get_project_folder() -> Path:
+    project_folder = Path(__file__).resolve().parents[2]
+    return project_folder

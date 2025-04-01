@@ -1,6 +1,7 @@
 import itertools
 import math
 import time
+from pathlib import Path
 from typing import (
     Dict,
     List,
@@ -22,7 +23,12 @@ from statsmodels.stats.proportion import proportion_confint
 
 from .stim_symbolic import DemSymbolic
 from .stim_utils import dem_to_parity_check, remove_obs_from_dem
-from .utils import _get_final_predictions, get_pfail, timeit
+from .utils import (
+    _get_final_predictions,
+    get_pfail,
+    get_project_folder,
+    timeit,
+)
 
 
 class ColorCode:
@@ -48,8 +54,9 @@ class ColorCode:
         p_cnot: float = 0.0,
         p_idle: float = 0.0,
         p_circuit: Optional[float] = None,
+        cultivation_circuit: Optional[stim.Circuit] = None,
         perfect_init_final: bool = False,
-        logical_gap: bool = False,
+        adjustable_logical_values: bool = False,
         use_last_detectors: bool = True,
         # custom_noise_channel: Optional[Tuple[str, object]] = None,
         # dem_decomposed: Optional[Dict[str, Tuple[
@@ -67,7 +74,7 @@ class ColorCode:
             Code distance. Should be an odd number of 3 or more.
         rounds : int >= 1
             Number of syndrome extraction rounds.
-        shape : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing'}, default 'tri'
+        shape : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing', 'cultivation+growing', 'cult+growing'}, default 'tri'
             Shape of the color code patch.
         d2 : int >= 3, optional
             Second code distance of the rectangular patch (if applicable). If
@@ -96,10 +103,12 @@ class ColorCode:
             each idle gate.
         p_circuit : float, optional
             If given, p_reset = p_meas = p_cnot = p_idle = p_circuit.
+        cultivation_circuit: stim.Circuit, optional
+            If given, it is used as the cultivation circuit for cultivation + growing circuit (`shape == 'cult+growing'`). WARNING: Its validity is not checked internally.
         perfect_init_final : bool, default False
             Whether to use perfect initialization and final measurement.
-        logical_gap : bool, default False
-            Whether to compute logical gap during decoding.
+        adjustable_logical_values : bool, default False
+            Whether to make logical values adjustable. If True, observables are included as additional detectors and decoding can be done either (1) by manually setting the logical values or (2) by running the decoder for each combination of logical values and choosing the lowest-weight one. The method (2) also yields the logical gap information, which quantifies the reliability of decoding.
         use_last_detectors : bool, default True
             Whether to use detectors from the last round.
         benchmarking : bool, default False
@@ -124,24 +133,34 @@ class ColorCode:
         d2 = self.d2 = d if d2 is None else d2
         self.rounds = rounds
         if shape in {"triangle", "tri"}:
+            assert d % 2 == 1
             self.shape = "tri"
             self.num_obs = 1
-            assert d % 2 == 1
 
         elif shape in {"rectangle", "rec"}:
+            assert d2 is not None
+            assert d % 2 == 0 and d2 % 2 == 0
             self.shape = "rec"
             self.num_obs = 2
-            assert d % 2 == 0 and d2 % 2 == 0
 
         elif shape == "rec_stability":
+            assert d2 is not None
+            assert d % 2 == 0 and d2 % 2 == 0
             self.shape = "rec_stability"
             self.num_obs = 2
-            assert d % 2 == 0 and d2 % 2 == 0
 
         elif shape == "growing":
+            assert d2 is not None
+            assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
             self.shape = "growing"
             self.num_obs = 1
+
+        elif shape in {"cultivation+growing", "cult+growing"}:
+            assert p_circuit is not None and p_bitflip == 0
+            assert d2 is not None
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
+            self.shape = "cult+growing"
+            self.num_obs = 1
 
         else:
             raise ValueError("Invalid shape")
@@ -155,10 +174,29 @@ class ColorCode:
             "cnot": p_cnot,
             "idle": p_idle,
         }
-        self.observables_as_detectors = logical_gap
-        if logical_gap and self.shape not in {"tri", "growing"}:
+        self.adjustable_logical_values = adjustable_logical_values
+        if adjustable_logical_values and self.shape not in {"tri", "growing"}:
             raise NotImplementedError
         self.use_last_detectors = use_last_detectors
+
+        if self.shape == "cult+growing":
+            if cultivation_circuit is None:
+                project_folder = get_project_folder()
+                try:
+                    path = (
+                        project_folder
+                        / "assets"
+                        / "cultivation_circuits"
+                        / f"d{d}_p{p_circuit}.stim"
+                    )
+                except FileNotFoundError:
+                    raise NotImplementedError(
+                        f"Not supported for d = {d}, p = {p_circuit}"
+                    )
+                cultivation_circuit = stim.Circuit.from_file(path)
+        else:
+            cultivation_circuit = None
+        self.cultivation_circuit = cultivation_circuit
 
         self.tanner_graph = ig.Graph()
         self.circuit = stim.Circuit()
@@ -223,7 +261,7 @@ class ColorCode:
         shape = self.shape
         tanner_graph = self.tanner_graph
 
-        if shape in {"tri", "growing"}:
+        if shape in {"tri", "growing", "cult+growing"}:
             if shape == "tri":
                 d = self.d
             else:
@@ -545,8 +583,8 @@ class ColorCode:
         elif shape in {"tri", "rec"}:
             temp_bdrys = "z"
             red_links = data_q1s = data_q2s = None
-        elif shape == "growing":
-            temp_bdrys = "mixed"  # Mixed boundaries
+        elif shape in {"growing", "cult+growing"}:
+            temp_bdrys = "mixed" if shape == "growing" else "y"
             y_init_patch_bdry = 3 * round((d2 - d) / 2)
             data_qubits_outside_init_patch = data_qubits.select(y_lt=y_init_patch_bdry)
             red_links = [
@@ -561,8 +599,6 @@ class ColorCode:
             data_q2s = red_links[:, 1]
         else:
             raise NotImplementedError
-
-        # custom_noise_channel = self.custom_noise_channel
 
         # Syndrome extraction circuit without SPAM
         synd_extr_circuit_without_spam = stim.Circuit()
@@ -598,7 +634,6 @@ class ColorCode:
                     data_qid = data_qubit.index
                     operated_qids.update({anc_qid, data_qid})
 
-                    # tanner_graph.add_edge(anc_qid, data_qid)
                     CX_target = (
                         [data_qid, anc_qid] if target < 6 else [anc_qid, data_qid]
                     )
@@ -823,7 +858,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, get_qubit_coords(anc_Z_qubit) + (0,))
 
             target = [stim.target_rec(ind) for ind in obs_Z_lookback_inds]
-            if self.observables_as_detectors:
+            if self.adjustable_logical_values:
                 raise NotImplementedError
             else:
                 circuit.append("OBSERVABLE_INCLUDE", target, 0)
@@ -860,7 +895,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, get_qubit_coords(anc_X_qubit) + (0,))
 
             target = [stim.target_rec(ind) for ind in obs_X_lookback_inds]
-            if self.observables_as_detectors:
+            if self.adjustable_logical_values:
                 raise NotImplementedError
             else:
                 circuit.append("OBSERVABLE_INCLUDE", target, 1)
@@ -881,7 +916,7 @@ class ColorCode:
                 ]
                 target = [stim.target_rec(ind) for ind in lookback_inds]
                 circuit.append("OBSERVABLE_INCLUDE", target, obs_id)
-                if self.observables_as_detectors:
+                if self.adjustable_logical_values:
                     circuit.append("DETECTOR", target, obs_id)
 
     def draw_tanner_graph(
@@ -1232,7 +1267,7 @@ class ColorCode:
             H = bp_inputs["H"]
             p = bp_inputs["p"]
         else:
-            if self.observables_as_detectors:
+            if self.adjustable_logical_values:
                 dem = remove_obs_from_dem(self.org_dem)
             else:
                 dem = self.org_dem
@@ -1327,7 +1362,7 @@ class ColorCode:
         """
 
         if erasure_matcher_predecoding:
-            assert self.observables_as_detectors
+            assert self.adjustable_logical_values
 
         if colors == "all":
             colors = ["r", "g", "b"]
@@ -1391,7 +1426,7 @@ class ColorCode:
         preds_dem1_all = []
         num_logical_value_combs = (
             len(all_logical_values)
-            if self.observables_as_detectors and logical_value is None
+            if self.adjustable_logical_values and logical_value is None
             else 1
         )
         for i in range(num_logical_value_combs):
@@ -1399,7 +1434,7 @@ class ColorCode:
             for c, (dem1, _) in dems.items():
                 if verbose:
                     print(f"color {c}, step-1 decoding for logical value {i}..")
-                if self.observables_as_detectors:
+                if self.adjustable_logical_values:
                     detector_outcomes_copy = detector_outcomes.copy()
                     if logical_value is not None:
                         detector_outcomes_copy[:, -num_obs:] = logical_value
@@ -1422,7 +1457,7 @@ class ColorCode:
                 if verbose:
                     print(f"color {c}, step-2 decoding for logical value {i}..")
 
-                if self.observables_as_detectors:
+                if self.adjustable_logical_values:
                     detector_outcomes_copy = detector_outcomes.copy()
                     if logical_value is not None:
                         detector_outcomes_copy[:, -num_obs:] = logical_value
@@ -1593,7 +1628,7 @@ class ColorCode:
             print("Decoding...")
             time.sleep(1)
 
-        if self.observables_as_detectors:
+        if self.adjustable_logical_values:
             preds, extra_outputs = self.decode(
                 det,
                 verbose=verbose,
@@ -1626,7 +1661,7 @@ class ColorCode:
                 "stats": (pfail, delta_pfail),
                 "fails": fails,
             }
-            if self.observables_as_detectors:
+            if self.adjustable_logical_values:
                 extra_outputs["logical_gaps"] = logical_gaps
 
             return num_fails, extra_outputs
