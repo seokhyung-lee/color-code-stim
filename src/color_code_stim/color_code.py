@@ -56,7 +56,7 @@ class ColorCode:
         p_circuit: Optional[float] = None,
         cultivation_circuit: Optional[stim.Circuit] = None,
         perfect_init_final: bool = False,
-        adjustable_logical_values: bool = False,
+        comparative_decoding: bool = False,
         use_last_detectors: bool = True,
         # custom_noise_channel: Optional[Tuple[str, object]] = None,
         # dem_decomposed: Optional[Dict[str, Tuple[
@@ -107,7 +107,7 @@ class ColorCode:
             If given, it is used as the cultivation circuit for cultivation + growing circuit (`shape == 'cult+growing'`). WARNING: Its validity is not checked internally.
         perfect_init_final : bool, default False
             Whether to use perfect initialization and final measurement.
-        adjustable_logical_values : bool, default False
+        comparative_decoding : bool, default False
             Whether to make logical values adjustable. If True, observables are included as additional detectors and decoding can be done either (1) by manually setting the logical values or (2) by running the decoder for each combination of logical values and choosing the lowest-weight one. The method (2) also yields the logical gap information, which quantifies the reliability of decoding.
         use_last_detectors : bool, default True
             Whether to use detectors from the last round.
@@ -174,8 +174,8 @@ class ColorCode:
             "cnot": p_cnot,
             "idle": p_idle,
         }
-        self.adjustable_logical_values = adjustable_logical_values
-        if adjustable_logical_values and self.shape not in {"tri", "growing"}:
+        self.comparative_decoding = comparative_decoding
+        if comparative_decoding and self.shape not in {"tri", "growing"}:
             raise NotImplementedError
         self.use_last_detectors = use_last_detectors
 
@@ -858,7 +858,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, get_qubit_coords(anc_Z_qubit) + (0,))
 
             target = [stim.target_rec(ind) for ind in obs_Z_lookback_inds]
-            if self.adjustable_logical_values:
+            if self.comparative_decoding:
                 raise NotImplementedError
             else:
                 circuit.append("OBSERVABLE_INCLUDE", target, 0)
@@ -895,7 +895,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, get_qubit_coords(anc_X_qubit) + (0,))
 
             target = [stim.target_rec(ind) for ind in obs_X_lookback_inds]
-            if self.adjustable_logical_values:
+            if self.comparative_decoding:
                 raise NotImplementedError
             else:
                 circuit.append("OBSERVABLE_INCLUDE", target, 1)
@@ -916,7 +916,7 @@ class ColorCode:
                 ]
                 target = [stim.target_rec(ind) for ind in lookback_inds]
                 circuit.append("OBSERVABLE_INCLUDE", target, obs_id)
-                if self.adjustable_logical_values:
+                if self.comparative_decoding:
                     circuit.append("DETECTOR", target, obs_id)
 
     def draw_tanner_graph(
@@ -1267,7 +1267,7 @@ class ColorCode:
             H = bp_inputs["H"]
             p = bp_inputs["p"]
         else:
-            if self.adjustable_logical_values:
+            if self.comparative_decoding:
                 dem = remove_obs_from_dem(self.org_dem)
             else:
                 dem = self.org_dem
@@ -1362,7 +1362,7 @@ class ColorCode:
         """
 
         if erasure_matcher_predecoding:
-            assert self.adjustable_logical_values
+            assert self.comparative_decoding
 
         if colors == "all":
             colors = ["r", "g", "b"]
@@ -1426,7 +1426,7 @@ class ColorCode:
         preds_dem1_all = []
         num_logical_value_combs = (
             len(all_logical_values)
-            if self.adjustable_logical_values and logical_value is None
+            if self.comparative_decoding and logical_value is None
             else 1
         )
         for i in range(num_logical_value_combs):
@@ -1434,7 +1434,7 @@ class ColorCode:
             for c, (dem1, _) in dems.items():
                 if verbose:
                     print(f"color {c}, step-1 decoding for logical value {i}..")
-                if self.adjustable_logical_values:
+                if self.comparative_decoding:
                     detector_outcomes_copy = detector_outcomes.copy()
                     if logical_value is not None:
                         detector_outcomes_copy[:, -num_obs:] = logical_value
@@ -1457,7 +1457,7 @@ class ColorCode:
                 if verbose:
                     print(f"color {c}, step-2 decoding for logical value {i}..")
 
-                if self.adjustable_logical_values:
+                if self.comparative_decoding:
                     detector_outcomes_copy = detector_outcomes.copy()
                     if logical_value is not None:
                         detector_outcomes_copy[:, -num_obs:] = logical_value
@@ -1628,7 +1628,7 @@ class ColorCode:
             print("Decoding...")
             time.sleep(1)
 
-        if self.adjustable_logical_values:
+        if self.comparative_decoding:
             preds, extra_outputs = self.decode(
                 det,
                 verbose=verbose,
@@ -1661,7 +1661,7 @@ class ColorCode:
                 "stats": (pfail, delta_pfail),
                 "fails": fails,
             }
-            if self.adjustable_logical_values:
+            if self.comparative_decoding:
                 extra_outputs["logical_gaps"] = logical_gaps
 
             return num_fails, extra_outputs
