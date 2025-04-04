@@ -39,13 +39,10 @@ if __name__ == "__main__":
     total_shots = round(1e7)
     p = 0.03
     n_jobs = 19
-    repeat = 10
+    repeat = 100
     d_max = 31
 
-    # Ensure directory exists
-    save_dir = os.path.join("data", "erasure_matcher_predecoding")
-    os.makedirs(save_dir, exist_ok=True)
-    filename = os.path.join(save_dir, "bitflip_results.csv")
+    filename = "bitflip_results.csv"
 
     # Initialize full_df with existing data if file exists
     if os.path.isfile(filename):
