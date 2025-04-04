@@ -7,14 +7,14 @@ from joblib import Parallel, cpu_count, delayed
 from src.color_code_stim import ColorCode
 
 
-def task(shots_batch, d, p):
-    cc = ColorCode(d=d, rounds=1, shape="tri", p_bitflip=p, comparative_decoding=True)
+def task(shots_batch, d, T, p):
+    cc = ColorCode(d=d, rounds=T, shape="tri", p_circuit=p, comparative_decoding=True)
     nfails1 = cc.simulate(shots_batch)
     nfails2 = cc.simulate(shots_batch, erasure_matcher_predecoding=True)
     return nfails1, nfails2
 
 
-def run_parallel_simulation(shots_to_run, d, p, n_jobs=-1, repeat=4):
+def run_parallel_simulation(shots_to_run, d, T, p, n_jobs=-1, repeat=4):
     # Determine number of shots per job
     shots_to_run = round(shots_to_run)
     n_jobs = n_jobs if n_jobs > 0 else cpu_count()
@@ -27,7 +27,9 @@ def run_parallel_simulation(shots_to_run, d, p, n_jobs=-1, repeat=4):
         job_shots[i] += 1
 
     # Run parallel jobs
-    results = Parallel(n_jobs=n_jobs)(delayed(task)(shots, d, p) for shots in job_shots)
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(task)(shots, d, T, p) for shots in job_shots
+    )
 
     # Sum up the results
     total_nfails1 = sum(result[0] for result in results)
@@ -37,25 +39,27 @@ def run_parallel_simulation(shots_to_run, d, p, n_jobs=-1, repeat=4):
 
 
 if __name__ == "__main__":
-    total_shots = round(1e6)
-    p = 0.05
+    total_shots = round(1e7)
+    p = 0.001
     n_jobs = 19
     repeat = 10
-    d_max = 31
+    d_max = 21
 
     # Get the current file's directory and create path for results file
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    filename = os.path.join(current_dir, "bitflip_results.csv")
+    filename = os.path.join(current_dir, "circuit_level_results.csv")
 
     # Initialize full_df with existing data if file exists
     if os.path.isfile(filename):
         full_df = pd.read_csv(filename)
 
     else:
-        full_df = pd.DataFrame(columns=["d", "p", "shots", "nfails_org", "nfails_em"])
+        full_df = pd.DataFrame(
+            columns=["d", "T", "p", "shots", "nfails_org", "nfails_em"]
+        )
 
     # Convert column data types to integers and ensure index types are correct
-    for col in ["shots", "nfails_org", "nfails_em", "d"]:
+    for col in ["shots", "nfails_org", "nfails_em", "d", "T"]:
         full_df[col] = full_df[col].astype(int)
     full_df["p"] = full_df["p"].astype(float)
 
@@ -64,11 +68,11 @@ if __name__ == "__main__":
     if "index" in full_df.columns:
         del full_df["index"]
 
-    full_df = full_df.set_index(["d", "p"])
+    full_df = full_df.set_index(["d", "T", "p"])
 
     for d in range(3, d_max + 1, 2):
-        # Check if this (d, p) combination already exists
-        idx = (d, p)
+        T = 4 * d
+        idx = (d, T, p)
         shots_to_run = total_shots
 
         print()
@@ -83,21 +87,23 @@ if __name__ == "__main__":
             # Skip if we've already run enough shots
             if shots_to_run <= 0:
                 print(
-                    f"Skipping d={d}, p={p}, already have {existing_shots} shots (target: {total_shots})"
+                    f"Skipping d={d}, T={T}, p={p}, already have {existing_shots} shots (target: {total_shots})"
                 )
                 continue
 
             print(
-                f"Running {shots_to_run} additional shots for d={d}, p={p} (existing: {existing_shots})"
+                f"Running {shots_to_run} additional shots for d={d}, T={T}, p={p} (existing: {existing_shots})"
             )
         else:
-            print(f"Running {shots_to_run} shots for new configuration d={d}, p={p}")
+            print(
+                f"Running {shots_to_run} shots for new configuration d={d}, T={T}, p={p}"
+            )
 
         # Run simulation only for the remaining shots
         nfails_org, nfails_em = run_parallel_simulation(
-            shots_to_run, d, p, n_jobs=n_jobs, repeat=repeat
+            shots_to_run, d, T, p, n_jobs=n_jobs, repeat=repeat
         )
-        print(f"d={d}, p={p}, nfails_org={nfails_org}, nfails_em={nfails_em}")
+        print(f"d={d}, T={T}, p={p}, nfails_org={nfails_org}, nfails_em={nfails_em}")
 
         # Create new result
         new_result = {
@@ -112,11 +118,11 @@ if __name__ == "__main__":
             full_df.loc[idx, "shots"] += shots_to_run
             full_df.loc[idx, "nfails_org"] += nfails_org
             full_df.loc[idx, "nfails_em"] += nfails_em
-            print(f"Updated existing data for d={d}, p={p}")
+            print(f"Updated existing data for d={d}, T={T}, p={p}")
         else:
             # Add new row
             full_df.loc[idx, :] = new_result
-            print(f"Added new data for d={d}, p={p}")
+            print(f"Added new data for d={d}, T={T}, p={p}")
 
         full_df.sort_index(inplace=True)
 
