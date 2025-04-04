@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import pandas as pd
 from joblib import Parallel, cpu_count, delayed
@@ -42,7 +43,9 @@ if __name__ == "__main__":
     repeat = 100
     d_max = 31
 
-    filename = "bitflip_results.csv"
+    # Get the current file's directory and create path for results file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    filename = os.path.join(current_dir, "bitflip_results.csv")
 
     # Initialize full_df with existing data if file exists
     if os.path.isfile(filename):
@@ -52,12 +55,14 @@ if __name__ == "__main__":
         full_df = pd.DataFrame(columns=["d", "p", "shots", "nfails_org", "nfails_em"])
 
     # Convert column data types to integers and ensure index types are correct
-    for col in ["shots", "nfails_org", "nfails_em"]:
+    for col in ["shots", "nfails_org", "nfails_em", "d"]:
         full_df[col] = full_df[col].astype(int)
-
-    full_df = full_df.reset_index()
-    full_df["d"] = full_df["d"].astype(int)
     full_df["p"] = full_df["p"].astype(float)
+
+    if "level_0" in full_df.columns:
+        del full_df["level_0"]
+    if "index" in full_df.columns:
+        del full_df["index"]
 
     full_df = full_df.set_index(["d", "p"])
 
@@ -65,6 +70,10 @@ if __name__ == "__main__":
         # Check if this (d, p) combination already exists
         idx = (d, p)
         shots_to_run = total_shots
+
+        print()
+        current_time = datetime.now()
+        print(f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         if idx in full_df.index:
             # Calculate remaining shots to run
