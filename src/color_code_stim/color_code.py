@@ -2,7 +2,7 @@ import itertools
 import math
 import stat
 import time
-from typing import Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import igraph as ig
 import matplotlib.pyplot as plt
@@ -27,6 +27,7 @@ from .utils import (
     timeit,
 )
 
+PAULI_LABEL = Literal["X", "Y", "Z"]
 COLOR_LABEL = Literal["r", "g", "b"]
 
 
@@ -35,13 +36,14 @@ class ColorCode:
     circuit: stim.Circuit
     d: int
     rounds: int
-    qubit_groups: dict
-    obs_paulis: List[str]
+    temp_bdry_type: Literal["X", "Y", "Z", "r", "g", "b"]
+    qubit_groups: Dict[str, ig.VertexSeq]
+    obs_paulis: List[PAULI_LABEL]
     org_dem: stim.DetectorErrorModel
     H: csc_matrix
     org_probs: np.ndarray
     obs_matrix: csc_matrix
-    _bp_inputs: dict
+    _bp_inputs: Dict[str, Any]
     detectors: List[Tuple[ig.Vertex, int]]
     detector_ids: Dict[COLOR_LABEL, List[int]]
     cult_detector_ids: List[int]
@@ -69,6 +71,7 @@ class ColorCode:
         shape: str = "tri",
         d2: int = None,
         cnot_schedule: Union[str, Sequence[int]] = "tri_optimal",
+        temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         p_bitflip: float = 0.0,
         p_reset: float = 0.0,
         p_meas: float = 0.0,
@@ -93,20 +96,38 @@ class ColorCode:
             Code distance. Should be an odd number of 3 or more.
         rounds : int >= 1
             Number of syndrome extraction rounds.
-        shape : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing', 'cultivation+growing', 'cult+growing'}, default 'tri'
-            Shape of the color code patch.
+        shape : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing',
+                'cult+growing'}, default 'tri'
+            Circuit type.
+            - 'triangle'/'tri': memory experiment of a triangular patch with distance
+              `d`.
+            - 'rectangle'/'rec': memory experiment of a rectangular patch with distance
+              `d` and `d2`.
+            - 'rec_stability': stability experiment of a rectangle-like patch with
+              single-type boundaries. `d` and `d2` indicate the size of the patch,
+              although they are no longer code distances.
+            - 'growing': growing operation from a triangular patch with distance `d` to
+              a larger triangular patch with distance `d2`. Must be `d2 > d`.
+            - 'cult+growing': cultivation on a triangular patch with distance `d`,
+              followed by a growing operation to distance `d2`. Must be `d2 > d`.
         d2 : int >= 3, optional
-            Second code distance of the rectangular patch (if applicable). If
-            not provided, d2=d.
-        cnot_schedule : {12-tuple of integers, 'tri_optimal', 'tri_optimal_reversed'}, default 'tri_optimal'
+            Second code distance required for several circuit types.
+            If not provided, `d2 = d`.
+        cnot_schedule : {12-tuple of integers, 'tri_optimal', 'tri_optimal_reversed'},
+                        default 'tri_optimal'
             CNOT schedule.
-            If this is a 12-tuple of integers, it indicate (a, b, ... l)
-            specifying the CNOT schedule.
-            If this is 'tri_optimal', it is (2, 3, 6, 5, 4, 1, 3, 4, 7, 6,
-            5, 2), which is the optimal schedule for the triangular color code.
-            If this is 'tri_optimal_reversed', it is (3, 4, 7, 6, 5, 2, 2,
-            3, 6, 5, 4, 1), which has the X- and Z-part reversed from
-            'tri_optimal'.
+            If this is a 12-tuple of integers, it indicates (a, b, ... l) specifying
+            the CNOT schedule.
+            If this is 'tri_optimal', it is (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2), which
+            is the optimal schedule for the triangular color code.
+            If this is 'tri_optimal_reversed', it is (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
+            which has the X- and Z-part reversed from 'tri_optimal'.
+        temp_bdry_type : {'X', 'Y', 'Z', 'x', 'y', 'z'}, optional
+            Type of the temporal boundaries, i.e., the reset/measurement basis of
+            data qubits at the beginning and end of the circuit.
+            Not supported for `rec_stability` and `cult+growing` circuits: the types of
+            the temporal boundaries are fixed to red for `rec_stability` and `Y` for
+            `cult+growing`. For the other circuit types, it is `Z` by default.
         p_bitflip : float, default 0
             Bit-flip probability at the start of each round.
         p_reset : float, default 0
@@ -155,32 +176,29 @@ class ColorCode:
         self.d = d
         d2 = self.d2 = d if d2 is None else d2
         self.rounds = rounds
+
         if shape in {"triangle", "tri"}:
             assert d % 2 == 1
             self.shape = "tri"
             self.num_obs = 1
-            self.obs_paulis = ["Z"]
 
         elif shape in {"rectangle", "rec"}:
             assert d2 is not None
             assert d % 2 == 0 and d2 % 2 == 0
             self.shape = "rec"
             self.num_obs = 2
-            self.obs_paulis = ["Z", "Z"]
 
         elif shape == "rec_stability":
             assert d2 is not None
             assert d % 2 == 0 and d2 % 2 == 0
             self.shape = "rec_stability"
             self.num_obs = 2
-            self.obs_paulis = ["Z", "X"]
 
         elif shape == "growing":
             assert d2 is not None
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
             self.shape = "growing"
             self.num_obs = 1
-            self.obs_paulis = ["Z"]
 
         elif shape in {"cultivation+growing", "cult+growing"}:
             assert p_circuit is not None and p_bitflip == 0
@@ -188,10 +206,28 @@ class ColorCode:
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
             self.shape = "cult+growing"
             self.num_obs = 1
-            self.obs_paulis = ["Y"]
 
         else:
             raise ValueError("Invalid shape")
+
+        if temp_bdry_type is None:
+            if shape == "rec_stability":
+                temp_bdry_type = "r"
+            elif shape == "cult+growing":
+                temp_bdry_type = "Y"
+            else:
+                temp_bdry_type = "Z"
+        else:
+            assert temp_bdry_type in {"X", "Y", "Z", "x", "y", "z"}
+            assert shape not in {"rec_stability", "cult+growing"}
+            temp_bdry_type = temp_bdry_type.upper()
+
+        self.temp_bdry_type = temp_bdry_type
+
+        if shape == "rec_stability":
+            self.obs_paulis = ["Z", "X"]
+        else:
+            self.obs_paulis = [temp_bdry_type] * self.num_obs
 
         self.cnot_schedule = cnot_schedule
         self.perfect_init_final = perfect_init_final
@@ -268,7 +304,14 @@ class ColorCode:
 
         self._bp_inputs = {}
 
-        # Get detector list
+        # Detector coordinates: (x, y, t, pauli, color) OR (x, y, t, pauli, color, flag)
+        # pauli = 0, 1, 2 -> X, Y, Z
+        # color = 0, 1, 2 -> r, g, b
+        # flag does not exist for ordinary detectors.
+        # flag >= 0: detector corresponding to an observable (id=flag)
+        # (only when comparatitive_decoding is True)
+        # flag = -2, -1: cultivation / interface between cultivation and growing
+        # (only for `cult+growing` circuits)
         detector_coords_dict = self.circuit.get_detector_coordinates()
         self.cult_detector_ids = []
         self.interface_detector_ids = []
@@ -295,7 +338,7 @@ class ColorCode:
                 # Ordinary X/Z detectors
                 if pauli == 0:
                     name = f"{x-1}-{y}-X"
-                elif pauli == 2:
+                elif pauli in [1, 2]:
                     name = f"{x+1}-{y}-Z"
                 else:
                     print(coords)
@@ -311,9 +354,7 @@ class ColorCode:
             for c in ["r", "g", "b"]:
                 self.decompose_detector_error_model(c)
 
-    def get_detector_type(
-        self, detector_id: int
-    ) -> Tuple[Literal["X", "Y", "Z"], Literal["r", "g", "b"]]:
+    def get_detector_type(self, detector_id: int) -> Tuple[PAULI_LABEL, COLOR_LABEL]:
         coords = self.circuit.get_detector_coordinates(only=[detector_id])[detector_id]
         pauli = coords[3]
         if pauli == 0:
@@ -646,7 +687,7 @@ class ColorCode:
         shape = self.shape
         d = self.d
         d2 = self.d2
-
+        temp_bdry_type = self.temp_bdry_type
         probs = self.probs
         p_bitflip = probs["bitflip"]
         p_reset = probs["reset"]
@@ -677,7 +718,6 @@ class ColorCode:
         all_qids_set = set(all_qids)
 
         if shape == "rec_stability":
-            init_temp_bdry = final_temp_bdry = "r"
             red_links = [
                 [link.source, link.target] for link in tanner_graph.es.select(color="r")
             ]
@@ -685,17 +725,8 @@ class ColorCode:
             data_q1s = red_links[:, 0]
             data_q2s = red_links[:, 1]
         elif shape in {"tri", "rec"}:
-            init_temp_bdry = final_temp_bdry = "z"
             red_links = data_q1s = data_q2s = None
         elif shape in {"growing", "cult+growing"}:
-            if shape == "growing":
-                init_temp_bdry = "growing"  # Mixed Z & red boundary
-                final_temp_bdry = "z"
-            else:
-                init_temp_bdry = (
-                    "cult_growing_interfrace"  # Interface after cultivation ends
-                )
-                final_temp_bdry = "y"
             x_offset_init_patch = 6 * round((d2 - d) / 2)
             y_offset_init_patch = 3 * round((d2 - d) / 2)
             data_qubits_outside_init_patch = data_qubits.select(
@@ -791,119 +822,109 @@ class ColorCode:
             synd_extr_circuit = synd_extr_circuit_without_spam.copy()
 
             synd_extr_circuit.append("MRZ", anc_Z_qids, p_meas)
-
-            if first:
-                for j, anc_qubit in enumerate(anc_Z_qubits):
-                    anc_qubit: ig.Vertex
-                    color = anc_qubit["color"]
-                    if color == "r":
-                        if init_temp_bdry == "r":
-                            continue
-                        if (
-                            init_temp_bdry in {"growing", "cult_growing_interfrace"}
-                            and anc_qubit["y"] < y_offset_init_patch - 0.1
-                        ):
-                            continue
-                    lookback = -num_anc_Z_qubits + j
-                    coords = self.get_qubit_coords(anc_qubit)
-                    coords += (
-                        0,
-                        2,
-                        self.color_to_color_val(color),
-                    )  # (time, pauli, color)
-                    targets = [stim.target_rec(lookback)]
-                    if (
-                        init_temp_bdry == "cult_growing_interfrace"
-                        and anc_qubit["y"] >= y_offset_init_patch
-                    ):
-                        # Add detector targets during cultivation
-                        coords += (-1,)  # indicate that it is in the interface region
-                        key = (
-                            "Z",
-                            frozenset(
-                                qubit.index
-                                for qubit in anc_qubit.neighbors()
-                                if qubit["y"] >= y_offset_init_patch
-                            ),
-                        )
-                        targets_cult = interface_detectors_info[key]
-                        targets_cult = [
-                            stim.target_rec(ind - num_anc_Z_qubits)
-                            for ind in targets_cult
-                        ]
-                        targets.extend(targets_cult)
-                    synd_extr_circuit.append("DETECTOR", targets, coords)
-
-            else:
-                for j, anc_qubit in enumerate(anc_Z_qubits):
-                    lookback = -num_anc_Z_qubits + j
-                    coords = self.get_qubit_coords(anc_qubit)
-                    color_val = self.color_to_color_val(anc_qubit["color"])
-                    coords += (0, 2, color_val)  # (time, pauli, color)
-                    targets = [
-                        stim.target_rec(lookback),
-                        stim.target_rec(lookback - num_anc_qubits),
-                    ]
-                    synd_extr_circuit.append("DETECTOR", targets, coords)
-
             synd_extr_circuit.append("MRX", anc_X_qids, p_meas)
-            if first and init_temp_bdry in {"r", "growing", "cult_growing_interfrace"}:
-                for j, anc_qubit in enumerate(anc_X_qubits):
+
+            ## If first is True:
+            # tri/rec: detectors have the same type as the temporal boundary
+            # rec_stability: X- and Z-type detectors exist except for red faces
+            # growing: same as tri/rec if anc_qubit['y'] >= y_offset_init_patch,
+            #          same as rec_stability otherwise.
+            # cult+growing: X- and Z-type detectors exist if anc_qubit['y'] >= y_offset_init_patch,
+            #               same as rec_stability otherwise.
+
+            ## Z- and X-type detectors
+            for pauli in ["Z", "X"]:
+                anc_qubits_now = anc_Z_qubits if pauli == "Z" else anc_X_qubits
+                init_lookback = -num_anc_qubits if pauli == "Z" else -num_anc_X_qubits
+
+                for j, anc_qubit in enumerate(anc_qubits_now):
                     anc_qubit: ig.Vertex
+                    pauli_val = 0 if pauli == "X" else 2
                     color = anc_qubit["color"]
-                    if init_temp_bdry == "r" and color == "r":
-                        continue
-                    elif init_temp_bdry == "growing" and (
-                        color == "r" or anc_qubit["y"] >= y_offset_init_patch
-                    ):
-                        continue
-                    elif (
-                        init_temp_bdry == "cult_growing_interfrace"
-                        and color == "r"
-                        and anc_qubit["y"] < y_offset_init_patch - 0.1
-                    ):
-                        continue
-
-                    lookback = -num_anc_X_qubits + j
+                    color_val = self.color_to_color_val(color)
                     coords = self.get_qubit_coords(anc_qubit)
-                    coords += (
-                        0,
-                        0,
-                        self.color_to_color_val(color),
-                    )  # (time, pauli, color)
-                    targets = [stim.target_rec(lookback)]
-                    if (
-                        init_temp_bdry == "cult_growing_interfrace"
-                        and anc_qubit["y"] >= y_offset_init_patch
-                    ):
-                        coords += (-1,)  # indicate that it is in the interface region
-                        key = (
-                            "X",
-                            frozenset(
-                                qubit.index
-                                for qubit in anc_qubit.neighbors()
-                                if qubit["y"] >= y_offset_init_patch
-                            ),
-                        )
-                        targets_cult = interface_detectors_info[key]
-                        targets_cult = [
-                            stim.target_rec(ind - num_anc_qubits)
-                            for ind in targets_cult
+                    det_coords = coords + (0, pauli_val, color_val)
+
+                    if not first:
+                        lookback = init_lookback + j
+                        targets = [
+                            stim.target_rec(lookback),
+                            stim.target_rec(lookback - num_anc_qubits),
                         ]
-                        targets.extend(targets_cult)
-                    synd_extr_circuit.append("DETECTOR", targets, coords)
+                        synd_extr_circuit.append("DETECTOR", targets, det_coords)
 
-            elif not first:
-                for j, anc_qubit in enumerate(anc_X_qubits):
-                    lookback = -num_anc_X_qubits + j
-                    coords = self.get_qubit_coords(anc_qubit)
-                    color_val = self.color_to_color_val(anc_qubit["color"])
-                    coords += (0, 0, color_val)  # (time, pauli, color)
-                    targets = [
-                        stim.target_rec(lookback),
-                        stim.target_rec(lookback - num_anc_qubits),
-                    ]
-                    synd_extr_circuit.append("DETECTOR", targets, coords)
+                    else:
+                        if shape in {"tri", "rec"}:
+                            detector_exists = temp_bdry_type == pauli
+                        elif shape == "rec_stability":
+                            detector_exists = color != "r"
+                        elif shape == "growing":
+                            if coords[1] >= y_offset_init_patch:
+                                detector_exists = temp_bdry_type == pauli
+                            else:
+                                detector_exists = color != "r"
+                        elif shape == "cult+growing":
+                            detector_exists = (
+                                coords[1] >= y_offset_init_patch or color != "r"
+                            )
+                        else:
+                            raise NotImplementedError
+
+                        if detector_exists:
+                            targets = [stim.target_rec(init_lookback + j)]
+
+                            # For cult+growing, need to add targets during cultivation
+                            # if anc_qubit is inside the initial patch.
+                            if (
+                                shape == "cult+growing"
+                                and coords[1] >= y_offset_init_patch
+                            ):
+                                # Add detector targets during cultivation
+                                det_coords += (-1,)
+                                adj_data_qubits = frozenset(
+                                    qubit.index
+                                    for qubit in anc_qubit.neighbors()
+                                    if qubit["y"] >= y_offset_init_patch
+                                )
+                                key = (pauli, adj_data_qubits)
+                                targets_cult = interface_detectors_info[key]
+                                targets_cult = [
+                                    stim.target_rec(init_lookback + cult_lookback)
+                                    for cult_lookback in targets_cult
+                                ]
+                                targets.extend(targets_cult)
+
+                            # Add detector
+                            synd_extr_circuit.append("DETECTOR", targets, det_coords)
+
+            ## Y-type detectors
+            if first and temp_bdry_type == "Y" and shape != "cult+growing":
+                for j_Z, anc_qubit_Z in enumerate(anc_Z_qubits):
+                    anc_qubit_Z: ig.Vertex
+                    color = anc_qubit_Z["color"]
+                    coords = self.get_qubit_coords(anc_qubit_Z)
+
+                    if shape in {"tri", "rec"}:
+                        detector_exists = True
+                    elif shape == "rec_stability":
+                        detector_exists = color != "r"
+                    elif shape == "growing":
+                        detector_exists = (
+                            coords[1] >= y_offset_init_patch or color != "r"
+                        )
+                    else:
+                        raise NotImplementedError
+
+                    if detector_exists:
+                        j_X = anc_X_qubits["name"].index(
+                            f"{anc_qubit_Z['x']}-{anc_qubit_Z['y']}-X"
+                        )
+                        det_coords = coords + (0, 1, self.color_to_color_val(color))
+                        targets = [
+                            stim.target_rec(-num_anc_qubits + j_Z),
+                            stim.target_rec(-num_anc_X_qubits + j_X),
+                        ]
+                        synd_extr_circuit.append("DETECTOR", targets, det_coords)
 
             if p_reset > 0:
                 synd_extr_circuit.append("X_ERROR", anc_Z_qids, p_reset)
@@ -924,12 +945,16 @@ class ColorCode:
             return synd_extr_circuit
 
         # Initialize qubits
-        if init_temp_bdry == "z":
-            circuit.append("RZ", data_qids)
+        if temp_bdry_type in {"X", "Y", "Z"} and shape not in {
+            "growing",
+            "cult+growing",
+        }:
+            circuit.append(f"R{temp_bdry_type}", data_qids)
             if p_reset > 0 and not perfect_init_final:
-                circuit.append("X_ERROR", data_qids, p_reset)
+                error_type = "Z_ERROR" if temp_bdry_type == "X" else "X_ERROR"
+                circuit.append(error_type, data_qids, p_reset)
 
-        elif init_temp_bdry == "r":
+        elif temp_bdry_type == "r":
             circuit.append("RX", data_q1s)
             circuit.append("RZ", data_q2s)
             if p_reset > 0 and not perfect_init_final:
@@ -942,12 +967,13 @@ class ColorCode:
             if p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
 
-        elif init_temp_bdry == "growing":
+        elif shape == "growing":
             # Data qubits inside the initial patch
             data_qids_init_patch = data_qubits.select(y_ge=y_offset_init_patch)["qid"]
-            circuit.append("RZ", data_qids_init_patch)
+            circuit.append(f"R{temp_bdry_type}", data_qids_init_patch)
             if p_reset > 0 and not perfect_init_final:
-                circuit.append("X_ERROR", data_qids_init_patch, p_reset)
+                error_type = "Z_ERROR" if temp_bdry_type == "X" else "X_ERROR"
+                circuit.append(error_type, data_qids_init_patch, p_reset)
 
             # Data qubits outside the initial patch
             circuit.append("RX", data_q1s)
@@ -962,7 +988,7 @@ class ColorCode:
             if p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
 
-        elif init_temp_bdry == "cult_growing_interfrace":
+        elif shape == "cult+growing":
             # Find last tick position
             for i in range(len(circuit) - 1, -1, -1):
                 instruction = circuit[i]
@@ -1016,33 +1042,44 @@ class ColorCode:
 
         # Final data qubit measurements (& observables for red boundaries)
         p_meas_final = 0 if perfect_init_final else p_meas
-        if final_temp_bdry in {"z", "y"}:
-            circuit.append(
-                "MZ" if final_temp_bdry == "z" else "MY", data_qids, p_meas_final
-            )
+        if temp_bdry_type in {"X", "Y", "Z"}:
+            circuit.append(f"M{temp_bdry_type}", data_qids, p_meas_final)
             if use_last_detectors:
-                for j_anc_Z, anc_Z_qubit in enumerate(anc_Z_qubits):
-                    anc_Z_qubit: ig.Vertex
-                    ngh_data_qubits = anc_Z_qubit.neighbors()
+                if temp_bdry_type == "X":
+                    anc_qubits_now = anc_X_qubits
+                    init_lookback = -num_data_qubits - num_anc_X_qubits
+                    pauli_val = 0
+                else:
+                    anc_qubits_now = anc_Z_qubits
+                    init_lookback = -num_data_qubits - num_anc_qubits
+                    pauli_val = 2 if temp_bdry_type == "Z" else 1
+
+                for j_anc, anc_qubit in enumerate(anc_qubits_now):
+                    anc_qubit: ig.Vertex
+                    ngh_data_qubits = anc_qubit.neighbors()
                     lookback_inds = [
                         -num_data_qubits + data_qids.index(q.index)
                         for q in ngh_data_qubits
                     ]
-                    lookback_inds.append(-num_data_qubits - num_anc_qubits + j_anc_Z)
-                    if final_temp_bdry == "y":
+                    lookback_inds.append(init_lookback + j_anc)
+                    if temp_bdry_type == "Y":
                         anc_X_qubit = tanner_graph.vs.find(
-                            name=f"{anc_Z_qubit['x']}-{anc_Z_qubit['y']}-X"
+                            name=f"{anc_qubit['x']}-{anc_qubit['y']}-X"
                         )
                         j_anc_X = anc_X_qids.index(anc_X_qubit.index)
                         lookback_inds.append(
                             -num_data_qubits - num_anc_X_qubits + j_anc_X
                         )
                     target = [stim.target_rec(ind) for ind in lookback_inds]
-                    color_val = self.color_to_color_val(anc_Z_qubit["color"])
-                    coords = self.get_qubit_coords(anc_Z_qubit) + (0, 2, color_val)
+                    color_val = self.color_to_color_val(anc_qubit["color"])
+                    coords = self.get_qubit_coords(anc_qubit) + (
+                        0,
+                        pauli_val,
+                        color_val,
+                    )
                     circuit.append("DETECTOR", target, coords)
 
-        elif final_temp_bdry == "r":
+        elif temp_bdry_type == "r":
             if not use_last_detectors:
                 raise NotImplementedError
 
@@ -1129,20 +1166,21 @@ class ColorCode:
             raise NotImplementedError
 
         # Logical observables
-        if final_temp_bdry in {"z", "y"}:
-            if self.shape in {"tri", "growing"}:
+        if temp_bdry_type in {"X", "Y", "Z"}:
+            if shape in {"tri", "growing"}:
                 qubits_logs = [tanner_graph.vs.select(obs=True)]
                 bdry_colors = [0] if self.shape == "tri" else [1]
 
-            elif self.shape == "cult+growing":
+            elif shape == "cult+growing":
                 qubits_logs = [tanner_graph.vs.select(pauli=None)]
                 bdry_colors = [1]
 
-            elif self.shape == "rec":
+            elif shape == "rec":
                 qubits_log_r = tanner_graph.vs.select(obs_r=True)
                 qubits_log_g = tanner_graph.vs.select(obs_g=True)
                 qubits_logs = [qubits_log_r, qubits_log_g]
                 bdry_colors = [1, 0]
+
             for obs_id, qubits_log in enumerate(qubits_logs):
                 lookback_inds = [
                     -num_data_qubits + data_qids.index(q.index) for q in qubits_log
@@ -1151,14 +1189,14 @@ class ColorCode:
                 circuit.append("OBSERVABLE_INCLUDE", target, obs_id)
                 if self.comparative_decoding:
                     color_val = bdry_colors[obs_id]
-                    if final_temp_bdry == "x":
+                    if temp_bdry_type == "X":
                         pauli_val = 0
-                    elif final_temp_bdry == "y":
+                    elif temp_bdry_type == "Y":
                         pauli_val = 1
-                    elif final_temp_bdry == "z":
+                    elif temp_bdry_type == "Z":
                         pauli_val = 2
                     else:
-                        raise ValueError(f"Invalid final_temp_bdry: {final_temp_bdry}")
+                        raise ValueError(f"Invalid temp_bdry_type: {temp_bdry_type}")
                     coords = (-1, -1, -1, pauli_val, color_val, obs_id)
                     circuit.append("DETECTOR", target, coords)
 
@@ -2156,7 +2194,9 @@ class ColorCode:
         *,
         bp_predecoding: bool = False,
         bp_prms: dict | None = None,
-        color: Union[List[str], str] = "all",
+        erasure_matcher_predecoding: bool = False,
+        partial_correction_by_predecoding: bool = False,
+        colors: Union[List[str], str] = "all",
         full_output: bool = False,
         alpha: float = 0.01,
         confint_method: str = "wilson",
@@ -2170,7 +2210,15 @@ class ColorCode:
         ----------
         shots : int
             Number of shots to simulate.
-        color : Union[List[str], str], default 'all'
+        bp_predecoding : bool, default False
+            If True, use belief propagation for predecoding.
+        bp_prms : dict | None, default None
+            Parameters for belief propagation predecoding.
+        erasure_matcher_predecoding : bool, default False
+            If True, use erasure matcher predecoding to identify errors common to all colors.
+        partial_correction_by_predecoding : bool, default False
+            If True, apply partial correction using predecoding results when erasure matcher predecoding fails.
+        colors : Union[List[str], str], default 'all'
             Colors of the sub-decoding procedures to consider. Can be 'all', one of {'r', 'g', 'b'},
             or a list containing any combination of {'r', 'g', 'b'}.
         full_output : bool, default False
@@ -2197,8 +2245,8 @@ class ColorCode:
             - 'fails': Boolean array indicating which samples failed
             - 'logical_gaps': Array of logical gaps (only when self.logical_gap is True)
         """
-        if color == "all":
-            color = ["r", "g", "b"]
+        if colors == "all":
+            colors = ["r", "g", "b"]
 
         if verbose:
             print("Sampling...")
@@ -2219,23 +2267,15 @@ class ColorCode:
             print("Decoding...")
             time.sleep(1)
 
-        if self.comparative_decoding:
-            preds, extra_outputs = self.decode(
-                det,
-                verbose=verbose,
-                full_output=True,
-                bp_predecoding=bp_predecoding,
-                bp_prms=bp_prms,
-            )
-            logical_gaps = extra_outputs["logical_gaps"]
-
-        else:
-            preds = self.decode(
-                det,
-                verbose=verbose,
-                bp_predecoding=bp_predecoding,
-                bp_prms=bp_prms,
-            )
+        preds = self.decode(
+            det,
+            verbose=verbose,
+            bp_predecoding=bp_predecoding,
+            bp_prms=bp_prms,
+            full_output=full_output,
+        )
+        if full_output:
+            preds, extra_outputs = preds
 
         if verbose:
             print("Postprocessing...")
@@ -2248,12 +2288,8 @@ class ColorCode:
             pfail, delta_pfail = get_pfail(
                 shots, num_fails, alpha=alpha, confint_method=confint_method
             )
-            extra_outputs = {
-                "stats": (pfail, delta_pfail),
-                "fails": fails,
-            }
-            if self.comparative_decoding:
-                extra_outputs["logical_gaps"] = logical_gaps
+            extra_outputs["stats"] = (pfail, delta_pfail)
+            extra_outputs["fails"] = fails
 
             return num_fails, extra_outputs
         else:
@@ -2307,7 +2343,7 @@ class ColorCode:
             if verbose:
                 print(f"Sampling {shots_now} samples...", end="")
             t0 = time.time()
-            fails_now = self.simulate(shots_now, color=color)
+            fails_now = self.simulate(shots_now, colors=color)
             shots_total += shots_now
             fails_total += fails_now
 
