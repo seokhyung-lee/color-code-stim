@@ -1637,11 +1637,13 @@ class ColorCode:
             if self.comparative_decoding and logical_value is None
             else 1
         )
+        if verbose:
+            print("First-round decoding:")
         for i in range(num_logical_classes):
             preds_dem1_all.append({})
             for c, (dem1, _) in dems.items():
                 if verbose:
-                    print(f"color {c}, step-1 decoding for logical class {i}..")
+                    print(f"    > logical class {i}, color {c}...")
                 if self.comparative_decoding:
                     detector_outcomes_copy = detector_outcomes.copy()
                     if logical_value is not None:
@@ -1658,6 +1660,8 @@ class ColorCode:
         if erasure_matcher_predecoding:
             assert len(preds_dem1_all) > 1
 
+            if verbose:
+                print("Erasure matcher predecoding:")
             (
                 predecoding_obs_preds,
                 predecoding_error_preds,
@@ -1671,6 +1675,12 @@ class ColorCode:
                 {c: arr[predecoding_failure, :] for c, arr in preds_dem1_all[i].items()}
                 for i in range(len(preds_dem1_all))
             ]
+
+            if verbose:
+                print(
+                    "    > # of samples with successful predecoding:",
+                    predecoding_success.sum(),
+                )
 
             if partial_correction_by_predecoding:
                 # When predecoding fails, use the predicted errors for partial correction
@@ -1699,6 +1709,8 @@ class ColorCode:
             preds_dem1_left = preds_dem1_all
 
         # Second round
+        if verbose:
+            print("Second-round decoding:")
         if detector_outcomes_left.shape[0] > 0:
             obs_preds = []
             weights = []
@@ -1708,7 +1720,7 @@ class ColorCode:
 
                 for c, (_, dem2) in dems.items():
                     if verbose:
-                        print(f"color {c}, step-2 decoding for logical class {i}..")
+                        print(f"    > logical class {i}, color {c}...")
 
                     if self.comparative_decoding:
                         detector_outcomes_copy = detector_outcomes_left.copy()
@@ -1734,6 +1746,8 @@ class ColorCode:
 
         # Merge predecoding & second-round decoding outcomes
         if erasure_matcher_predecoding and np.any(predecoding_success):
+            if verbose:
+                print("Merging predecoding & second-round decoding outcomes")
             # For samples with successful predecoding, use the predecoding results
             full_obs_preds_final = predecoding_obs_preds
             full_best_colors = np.full(detector_outcomes.shape[0], "P")
