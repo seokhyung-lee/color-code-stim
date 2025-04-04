@@ -1,10 +1,11 @@
-from typing import Sequence, List, Set
+from typing import List, Sequence, Set
 
 import numpy as np
 import stim
+from scipy.sparse import csr_matrix
 
 
-class ErrorMechanismSymbolic:
+class _ErrorMechanismSymbolic:
     prob_vars: np.ndarray
     prob_muls: np.ndarray
     dets: Set[stim.DemTarget]
@@ -28,9 +29,10 @@ class ErrorMechanismSymbolic:
         self.obss = set(obss)
 
 
-class DemSymbolic:
-    ems: List[ErrorMechanismSymbolic]
+class _DemSymbolic:
+    ems: List[_ErrorMechanismSymbolic]
     dets_org: stim.DetectorErrorModel
+    error_mapping_arr: csr_matrix
 
     def __init__(
         self,
@@ -38,11 +40,29 @@ class DemSymbolic:
         dets: Sequence[Sequence[stim.DemTarget]],
         obss: Sequence[Sequence[stim.DemTarget]],
         dets_org: stim.DetectorErrorModel,
+        num_org_errors: int,
     ):
         self.ems = [
-            ErrorMechanismSymbolic(*prms) for prms in zip(prob_vars, dets, obss)
+            _ErrorMechanismSymbolic(*prms) for prms in zip(prob_vars, dets, obss)
         ]
         self.dets_org = dets_org
+
+        # Prepare data for efficient CSR matrix creation
+        data = []
+        rows = []
+        cols = []
+
+        # Collect the coordinates of all True values
+        for i, pv in enumerate(prob_vars):
+            for col in pv:
+                rows.append(i)
+                cols.append(col)
+                data.append(True)
+
+        # Create the CSR matrix directly from the coordinate data
+        self.error_mapping_arr = csr_matrix(
+            (data, (rows, cols)), shape=(len(self.ems), num_org_errors), dtype=bool
+        )
 
     def to_dem(
         self, prob_vals: Sequence[float], sort: bool = False
@@ -83,7 +103,7 @@ class DemSymbolic:
         - e1.dets ∪ e2.dets equals e.dets, and e1.dets ∩ e2.dets is empty.
         - e1.obss ∪ e2.obss equals e.obss, and e1.obss ∩ e2.obss is empty.
 
-        For each valid candidate pair, updates both e1 and e2 by concatenating e’s
+        For each valid candidate pair, updates both e1 and e2 by concatenating e's
         probability variable and multiplier arrays. If there are multiple candidate pairs,
         the probability multipliers from e are split equally among the pairs.
 
@@ -111,7 +131,7 @@ class DemSymbolic:
                             continue
                         if e1.obss & e2.obss:
                             continue
-                        # Check that the union of their detectors and observables equals e’s.
+                        # Check that the union of their detectors and observables equals e's.
                         if (e1.dets | e2.dets == e.dets) and (
                             e1.obss | e2.obss == e.obss
                         ):
