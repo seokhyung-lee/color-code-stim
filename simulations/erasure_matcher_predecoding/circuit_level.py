@@ -11,9 +11,15 @@ from src.color_code_stim import ColorCode
 def task(shots_batch, d, T, p):
     seed = np.random.randint(0, 2**32)
     cc = ColorCode(d=d, rounds=T, shape="tri", p_circuit=p, comparative_decoding=True)
-    nfails1, _ = cc.simulate(shots_batch, seed=seed)
-    nfails2, _ = cc.simulate(shots_batch, erasure_matcher_predecoding=True, seed=seed)
-    return nfails1, nfails2
+    nfails_org = cc.simulate(shots_batch, seed=seed)
+    nfails_em = cc.simulate(shots_batch, erasure_matcher_predecoding=True, seed=seed)
+    nfails_empc = cc.simulate(
+        shots_batch,
+        erasure_matcher_predecoding=True,
+        partial_correction_by_predecoding=True,
+        seed=seed,
+    )
+    return nfails_org, nfails_em, nfails_empc
 
 
 def run_parallel_simulation(shots_to_run, d, T, p, n_jobs=-1, repeat=4):
@@ -34,10 +40,11 @@ def run_parallel_simulation(shots_to_run, d, T, p, n_jobs=-1, repeat=4):
     )
 
     # Sum up the results
-    total_nfails1 = sum(result[0] for result in results)
-    total_nfails2 = sum(result[1] for result in results)
+    total_nfails_org = sum(result[0] for result in results)
+    total_nfails_em = sum(result[1] for result in results)
+    total_nfails_empc = sum(result[2] for result in results)
 
-    return total_nfails1, total_nfails2
+    return total_nfails_org, total_nfails_em, total_nfails_empc
 
 
 if __name__ == "__main__":
@@ -52,7 +59,7 @@ if __name__ == "__main__":
     for shots in np.arange(0, total_shots + 1, shots_batch)[1:]:
         # Get the current file's directory and create path for results file
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        filename = os.path.join(current_dir, "circuit_level_results_fixed_seed.csv")
+        filename = os.path.join(current_dir, "circuit_level_results.csv")
 
         # Initialize full_df with existing data if file exists
         if os.path.isfile(filename):
@@ -60,11 +67,19 @@ if __name__ == "__main__":
 
         else:
             full_df = pd.DataFrame(
-                columns=["d", "T", "p", "shots", "nfails_org", "nfails_em"]
+                columns=[
+                    "d",
+                    "T",
+                    "p",
+                    "shots",
+                    "nfails_org",
+                    "nfails_em",
+                    "nfails_empc",
+                ]
             )
 
         # Convert column data types to integers and ensure index types are correct
-        for col in ["shots", "nfails_org", "nfails_em", "d", "T"]:
+        for col in ["shots", "nfails_org", "nfails_em", "nfails_empc", "d", "T"]:
             full_df[col] = full_df[col].astype(int)
         full_df["p"] = full_df["p"].astype(float)
 
@@ -105,11 +120,11 @@ if __name__ == "__main__":
                 )
 
             # Run simulation only for the remaining shots
-            nfails_org, nfails_em = run_parallel_simulation(
+            nfails_org, nfails_em, nfails_empc = run_parallel_simulation(
                 shots_to_run, d, T, p, n_jobs=n_jobs, repeat=repeat
             )
             print(
-                f"d={d}, T={T}, p={p}, nfails_org={nfails_org}, nfails_em={nfails_em}"
+                f"d={d}, T={T}, p={p}, nfails_org={nfails_org}, nfails_em={nfails_em}, nfails_empc={nfails_empc}"
             )
 
             # Create new result
@@ -117,6 +132,7 @@ if __name__ == "__main__":
                 "shots": round(shots_to_run),
                 "nfails_org": round(nfails_org),
                 "nfails_em": round(nfails_em),
+                "nfails_empc": round(nfails_empc),
             }
 
             # Update results
@@ -125,6 +141,7 @@ if __name__ == "__main__":
                 full_df.loc[idx, "shots"] += round(shots_to_run)
                 full_df.loc[idx, "nfails_org"] += round(nfails_org)
                 full_df.loc[idx, "nfails_em"] += round(nfails_em)
+                full_df.loc[idx, "nfails_empc"] += round(nfails_empc)
                 print(f"Updated existing data for d={d}, T={T}, p={p}")
             else:
                 # Add new row

@@ -1,5 +1,6 @@
 import itertools
 import time
+from math import e
 from typing import (
     Any,
     Dict,
@@ -2610,7 +2611,10 @@ class ColorCode:
             extra_outputs["stats"] = (pfail, delta_pfail)
             extra_outputs["fails"] = fails
 
-        return num_fails, extra_outputs
+            return num_fails, extra_outputs
+
+        else:
+            return num_fails
 
     def simulate_target_confint_gen(
         self,
