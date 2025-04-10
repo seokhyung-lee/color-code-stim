@@ -2146,47 +2146,16 @@ class ColorCode:
         else:
             return obs_preds_final
 
-    def _decode_dem1(
-        self, dem1: stim.DetectorErrorModel, detector_outcomes: np.ndarray, color: str
-    ) -> np.ndarray:
-        det_outcomes_dem1 = detector_outcomes.copy()
-        det_outcomes_dem1[:, self.detector_ids[color]] = False
-        matching = pymatching.Matching.from_detector_error_model(dem1)
-        preds_dem1 = matching.decode_batch(det_outcomes_dem1)
-        del det_outcomes_dem1, matching
-
-        return preds_dem1
-
     def _decode_stage1(self, detector_outcomes: np.ndarray, color: str) -> np.ndarray:
         det_outcomes_dem1 = detector_outcomes.copy()
         det_outcomes_dem1[:, self.detector_ids[color]] = False
         H, p = self.Hs_decomposed[color][0], self.probs_decomposed[color][0]
-        matching = pymatching.Matching.from_check_matrix(H, error_probabilities=p)
+        weights = np.log((1 - p) / p)
+        matching = pymatching.Matching.from_check_matrix(H, weights=weights)
         preds_dem1 = matching.decode_batch(det_outcomes_dem1)
         del det_outcomes_dem1, matching
 
         return preds_dem1
-
-    def _decode_dem2(
-        self,
-        dem2: stim.DetectorErrorModel,
-        detector_outcomes: np.ndarray,
-        preds_dem1: np.ndarray,
-        color: str,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        det_outcome_dem2 = detector_outcomes.copy()
-        mask = np.full_like(det_outcome_dem2, True)
-        mask[:, self.detector_ids[color]] = False
-        det_outcome_dem2[mask] = False
-        del mask
-        det_outcome_dem2 = np.concatenate([det_outcome_dem2, preds_dem1], axis=1)
-        matching = pymatching.Matching.from_detector_error_model(dem2)
-        preds, weights_new = matching.decode_batch(
-            det_outcome_dem2, return_weights=True
-        )
-        del det_outcome_dem2, matching
-
-        return preds, weights_new
 
     def _decode_stage2(
         self,
@@ -2202,15 +2171,11 @@ class ColorCode:
         det_outcome_dem2 = np.concatenate([det_outcome_dem2, preds_dem1], axis=1)
 
         H, p = self.Hs_decomposed[color][1], self.probs_decomposed[color][1]
-        matching = pymatching.Matching.from_check_matrix(H, error_probabilities=p)
+        weights = np.log((1 - p) / p)
+        matching = pymatching.Matching.from_check_matrix(H, weights=weights)
         preds, weights_new = matching.decode_batch(
             det_outcome_dem2, return_weights=True
         )
-        # dem2 = self.dems_decomposed[color][1]
-        # matching = pymatching.Matching.from_detector_error_model(dem2)
-        # preds, weights_new = matching.decode_batch(
-        #     det_outcome_dem2, return_weights=True
-        # )
         del det_outcome_dem2, matching
 
         return preds, weights_new
@@ -2582,18 +2547,12 @@ class ColorCode:
 
         if verbose:
             print("Sampling...")
-            time.sleep(1)
 
         shots = round(shots)
         det, obs = self.sample(shots, seed=seed)
 
         if verbose:
-            print("Decomposing detector error model...")
-            time.sleep(1)
-
-        if verbose:
             print("Decoding...")
-            time.sleep(1)
 
         preds = self.decode(
             det,
@@ -2610,7 +2569,6 @@ class ColorCode:
 
         if verbose:
             print("Postprocessing...")
-            time.sleep(1)
 
         fails = np.logical_xor(obs, preds)
         num_fails = np.sum(fails, axis=0)
