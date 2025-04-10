@@ -2531,6 +2531,7 @@ class ColorCode:
         colors: Union[List[str], str] = "all",
         alpha: float = 0.01,
         confint_method: str = "wilson",
+        full_output: bool = False,
         seed: Optional[int] = None,
         verbose: bool = False,
     ) -> Tuple[np.ndarray, dict]:
@@ -2557,6 +2558,8 @@ class ColorCode:
         confint_method : str, default 'wilson'
             Method to calculate the confidence interval.
             See statsmodels.stats.proportion.proportion_confint for available options.
+        full_output: bool = False,
+            If True, return additional information.
         seed : Optional[int], default None
             Seed to initialize the random number generator.
         verbose : bool, default False
@@ -2572,6 +2575,7 @@ class ColorCode:
               and delta_pfail is the half-width of the confidence interval
             - 'fails': Boolean array indicating which samples failed
             - 'logical_gaps': Array of logical gaps (only when self.logical_gap is True)
+            - etc.
         """
         if colors == "all":
             colors = ["r", "g", "b"]
@@ -2587,40 +2591,36 @@ class ColorCode:
             print("Decomposing detector error model...")
             time.sleep(1)
 
-        # dems = {}
-        # for c in color:
-        #     dems[c] = self.decompose_detector_error_model(c)
-
         if verbose:
             print("Decoding...")
             time.sleep(1)
 
-        preds, extra_outputs = self.decode(
+        preds = self.decode(
             det,
             verbose=verbose,
             bp_predecoding=bp_predecoding,
             bp_prms=bp_prms,
-            full_output=True,
+            full_output=full_output,
             erasure_matcher_predecoding=erasure_matcher_predecoding,
             partial_correction_by_predecoding=partial_correction_by_predecoding,
         )
+
+        if full_output:
+            preds, extra_outputs = preds
 
         if verbose:
             print("Postprocessing...")
             time.sleep(1)
 
-        if self.shape == "cult+growing":
-            accepted_cult = extra_outputs["accepted_cult"]
-            accepted_interface = extra_outputs["accepted_interface"]
-
         fails = np.logical_xor(obs, preds)
         num_fails = np.sum(fails, axis=0)
 
-        pfail, delta_pfail = get_pfail(
-            shots, num_fails, alpha=alpha, confint_method=confint_method
-        )
-        extra_outputs["stats"] = (pfail, delta_pfail)
-        extra_outputs["fails"] = fails
+        if full_output:
+            pfail, delta_pfail = get_pfail(
+                shots, num_fails, alpha=alpha, confint_method=confint_method
+            )
+            extra_outputs["stats"] = (pfail, delta_pfail)
+            extra_outputs["fails"] = fails
 
         return num_fails, extra_outputs
 
