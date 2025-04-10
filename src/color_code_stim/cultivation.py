@@ -64,7 +64,16 @@ def _reformat_cultivation_circuit(
     reordered_circuit = _reorder_qubits_in_circuit(adjusted_circuit, qubit_order)
 
     # 3. Isolate the final block
-    return _isolate_final_mpps(reordered_circuit)
+    circuit, final_detectors_info = _isolate_final_mpps(reordered_circuit)
+
+    # 4. Remove observable
+    circuit_new = stim.Circuit()
+    for inst in circuit:
+        if inst.name == "OBSERVABLE_INCLUDE":
+            continue
+        circuit_new.append(inst)
+
+    return circuit_new, final_detectors_info
 
 
 def _is_data_qubit(ox: int, oy: int) -> bool:
@@ -73,7 +82,7 @@ def _is_data_qubit(ox: int, oy: int) -> bool:
     based on the provided rules.
 
     Parameters
-    ----------
+----------
     ox: Original X coordinate.
     oy: Original Y coordinate.
 

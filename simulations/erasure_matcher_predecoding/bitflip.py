@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 from joblib import Parallel, cpu_count, delayed
 
@@ -8,9 +9,10 @@ from src.color_code_stim import ColorCode
 
 
 def task(shots_batch, d, p):
+    seed = np.random.randint(0, 2**32)
     cc = ColorCode(d=d, rounds=1, shape="tri", p_bitflip=p, comparative_decoding=True)
-    nfails1 = cc.simulate(shots_batch)
-    nfails2 = cc.simulate(shots_batch, erasure_matcher_predecoding=True)
+    nfails1, _ = cc.simulate(shots_batch, seed=seed)
+    nfails2, _ = cc.simulate(shots_batch, erasure_matcher_predecoding=True, seed=seed)
     return nfails1, nfails2
 
 
@@ -39,13 +41,13 @@ def run_parallel_simulation(shots_to_run, d, p, n_jobs=-1, repeat=4):
 if __name__ == "__main__":
     total_shots = round(1e6)
     p = 0.05
-    n_jobs = 19
-    repeat = 10
-    d_max = 31
+    n_jobs = 18
+    repeat = 100
+    d_max = 21
 
     # Get the current file's directory and create path for results file
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    filename = os.path.join(current_dir, "bitflip_results.csv")
+    filename = os.path.join(current_dir, "bitflip_results_fixed_seed.csv")
 
     # Initialize full_df with existing data if file exists
     if os.path.isfile(filename):
