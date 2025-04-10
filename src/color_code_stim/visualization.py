@@ -25,11 +25,17 @@ def draw_lattice(
     highlight_qubits: Optional[
         List[int] | List[Tuple[float, float]] | List[str] | np.ndarray
     ] = None,
-    highlight_color: str = "orange",
+    highlight_qubit_color: str = "orange",
+    highlight_qubit_marker: str = "^",
     highlight_qubits2: Optional[
         List[int] | List[Tuple[float, float]] | List[str] | np.ndarray
     ] = None,
-    highlight_color2: str = "purple",
+    highlight_qubit_color2: str = "purple",
+    highlight_qubit_marker2: str = "s",
+    highlight_faces: Optional[
+        List[int] | List[Tuple[float, float]] | List[str] | np.ndarray
+    ] = None,
+    highlight_face_lightness: float = 1,
     figsize: Tuple[float, float] = (6, 5),
 ) -> plt.Axes:
     """
@@ -54,19 +60,30 @@ def draw_lattice(
         Whether to draw circles representing data qubits.
     data_qubit_color : str, default 'black'
         Color for the data qubit circles (if shown).
-    data_qubit_size : float, default 5.0
+    data_qubit_size : float, default 100.0
         Size for the data qubit circles (if shown).
     highlight_qubits : list[int] | list[tuple] | list[str] | np.ndarray, optional
         Data qubits to highlight with orange triangles (by default).
         Can be a list of data qubit indices (ordered by code.vs.select(pauli=None)),
         a list of coordinate tuples [(x, y), ...], or a list of qubit names ['x-y', ...].
-    highlight_color : str, default 'orange'
+    highlight_qubit_color : str, default 'orange'
         The color used to highlight specified data qubits.
+    highlight_qubit_marker : str, default '^' (triangle)
+        The marker used to highlight specified data qubits.
     highlight_qubits2 : list[int] | list[tuple] | list[str] | np.ndarray, optional
         Data qubits to highlight with purple squares (by default).
         Format is the same as highlight_qubits.
-    highlight_color2 : str, default 'purple'
+    highlight_qubit_color2 : str, default 'purple'
         The color used to highlight the second set of specified data qubits.
+    highlight_qubit_marker2 : str, default 's' (square)
+        The marker used to highlight the second set of specified data qubits.
+    highlight_faces : list[int] | list[tuple] | list[str] | np.ndarray, optional
+        Z ancillary qubits whose corresponding faces should be highlighted.
+        Can be a list of Z ancillary qubit indices (ordered by code.vs.select(pauli="Z")),
+        a list of coordinate tuples [(x, y), ...], or a list of qubit names ['x-y', ...].
+        Note that for names, the actual stored name includes a '-Z' suffix.
+    highlight_face_lightness : float, default 0.7
+        Controls the lightness of highlighted faces. Higher values make colors more vibrant.
 
     Returns
     -------
@@ -145,6 +162,47 @@ def draw_lattice(
             if found_vid is not None:
                 highlight_indices2.add(found_vid)
 
+    # --- Pre-process highlight_faces ---
+    highlight_face_indices = set()
+    if isinstance(highlight_faces, np.ndarray):
+        highlight_faces = highlight_faces.tolist()
+    if highlight_faces:
+        z_coords_to_vid = {(v["x"], v["y"]): v.index for v in anc_Z_qubits}
+        z_name_to_vid = {v["name"]: v.index for v in anc_Z_qubits}
+        # For Z qubits with name format "x-y", also add a mapping for "x-y-Z"
+        z_name_to_vid.update(
+            {
+                n.replace("-Z", ""): idx
+                for n, idx in z_name_to_vid.items()
+                if n.endswith("-Z")
+            }
+        )
+        z_qubit_indices = [
+            v.index for v in anc_Z_qubits
+        ]  # For index-based highlighting
+
+        for hf in highlight_faces:
+            found_vid = None
+            if isinstance(hf, int):
+                if 0 <= hf < len(z_qubit_indices):
+                    found_vid = z_qubit_indices[hf]
+                else:
+                    print(f"Warning: Highlight face index {hf} is out of range.")
+            elif isinstance(hf, tuple) and len(hf) == 2:
+                found_vid = z_coords_to_vid.get(hf)
+                if found_vid is None:
+                    print(f"Warning: Highlight face coordinate {hf} not found.")
+            elif isinstance(hf, str):
+                # Try with and without the "-Z" suffix
+                found_vid = z_name_to_vid.get(hf)
+                if found_vid is None:
+                    print(f"Warning: Highlight face name '{hf}' not found.")
+            else:
+                print(f"Warning: Invalid highlight face format: {hf}. Skipping.")
+
+            if found_vid is not None:
+                highlight_face_indices.add(found_vid)
+
     # --- Color mapping ---
     color_map = {"r": "red", "g": "green", "b": "blue"}
 
@@ -163,8 +221,15 @@ def draw_lattice(
     for anc_z in anc_Z_qubits:
         anc_color_label = anc_z["color"]
         base_color = color_map.get(anc_color_label, "gray")
+
+        # Use highlight_face_lightness for highlighted faces
+        if anc_z.index in highlight_face_indices:
+            current_lightness = highlight_face_lightness
+        else:
+            current_lightness = face_lightness
+
         # Lighten the color based on alpha but keep opacity at 1
-        fill_color = lighten_color(base_color, face_lightness)
+        fill_color = lighten_color(base_color, current_lightness)
 
         neighbors = [v for v in anc_z.neighbors() if v["pauli"] is None]
 
@@ -251,11 +316,11 @@ def draw_lattice(
             ax.scatter(
                 highlight1_x,
                 highlight1_y,
-                c=highlight_color,
+                c=highlight_qubit_color,
                 s=data_qubit_size * 1.2,  # Slightly larger for visibility
                 edgecolors="black",
                 linewidths=1,
-                marker="^",  # Triangle marker
+                marker=highlight_qubit_marker,  # Triangle marker
                 zorder=4,  # Higher zorder to appear on top of squares
             )
 
@@ -269,11 +334,11 @@ def draw_lattice(
             ax.scatter(
                 highlight2_x,
                 highlight2_y,
-                c=highlight_color2,
+                c=highlight_qubit_color2,
                 s=data_qubit_size * 1.2,  # Slightly larger for visibility
                 edgecolors="black",
                 linewidths=1,
-                marker="s",  # Square marker
+                marker=highlight_qubit_marker2,  # Square marker
                 zorder=3,
             )
 

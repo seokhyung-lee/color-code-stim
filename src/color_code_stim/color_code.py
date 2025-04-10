@@ -1323,6 +1323,9 @@ class ColorCode:
         highlight_qubits2: Optional[
             List[int] | List[Tuple[float, float]] | List[str] | np.ndarray
         ] = None,
+        highlight_faces: Optional[
+            List[int] | List[Tuple[float, float]] | List[str] | np.ndarray
+        ] = None,
         **kwargs,
     ) -> plt.Axes:
         """
@@ -1342,6 +1345,11 @@ class ColorCode:
         highlight_qubits2 : list[int] | list[tuple] | list[str] | np.ndarray, optional
             Data qubits to highlight with purple rectangles (by default).
             Format is the same as highlight_qubits.
+        highlight_faces : list[int] | list[tuple] | list[str] | np.ndarray, optional
+            Z ancillary qubits whose corresponding faces should be highlighted.
+            Can be a list of Z ancillary qubit indices (ordered by code.vs.select(pauli="Z")),
+            a list of coordinate tuples [(x, y), ...], or a list of qubit names ['x-y', ...].
+            Note that for names, the actual stored name includes a '-Z' suffix.
         edge_color : str, default 'black'
             Colors for edges.
         edge_linewidth : float, default 1.0
@@ -1354,10 +1362,16 @@ class ColorCode:
             Color for the data qubit circles (if shown).
         data_qubit_size : float, default 5.0
             Size for the data qubit circles (if shown).
-        highlight_color : str, default 'orange'
+        highlight_qubit_color : str, default 'orange'
             The color used to highlight qubits in `highlight_qubits`.
-        highlight_color2 : str, default 'purple'
+        highlight_qubit_color2 : str, default 'purple'
             The color used to highlight qubits in `highlight_qubits2`.
+        highlight_qubit_marker : str, default '^' (triangle)
+            The marker used to highlight qubits in `highlight_qubits`.
+        highlight_qubit_marker2 : str, default 's' (square)
+            The marker used to highlight qubits in `highlight_qubits2`.
+        highlight_face_lightness : float, default 1.0
+            Controls the lightness of the highlighted faces.
 
         Returns
         -------
@@ -1370,6 +1384,7 @@ class ColorCode:
             show_axes=show_axes,
             highlight_qubits=highlight_qubits,
             highlight_qubits2=highlight_qubits2,
+            highlight_faces=highlight_faces,
             **kwargs,
         )
 
@@ -1780,7 +1795,6 @@ class ColorCode:
         erasure_matcher_predecoding: bool = False,
         partial_correction_by_predecoding: bool = False,
         errors_as_qubits: bool = False,
-        check_validity: bool = False,
         full_output: bool = False,
         verbose: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, dict]:
@@ -1814,8 +1828,6 @@ class ColorCode:
             Sort the error prediction by the order of data qubits in the tanner graph.
             Available only for `shape="tri"` and `shape="rec"` with `rounds=1' under
             bit-flip noise. (Raises error otherwise)
-        check_validity : bool, default False
-            Whether to check the validity of the predicted error pattern.
         full_output : bool, default False
             Whether to return additional information about the decoding process.
         verbose : bool, default False
@@ -1916,11 +1928,11 @@ class ColorCode:
             if self.comparative_decoding and logical_value is None
             else 1
         )
-        preds_dem1_all = []
+        error_preds_stage1_all = []
         if verbose:
             print("First-round decoding:")
         for i in range(num_logical_classes):
-            preds_dem1_all.append({})
+            error_preds_stage1_all.append({})
             for c in colors:
                 if verbose:
                     print(f"    > logical class {i}, color {c}...")
@@ -1930,15 +1942,17 @@ class ColorCode:
                         detector_outcomes_copy[:, -num_obs:] = logical_value
                     else:
                         detector_outcomes_copy[:, -num_obs:] = all_logical_values[i]
-                    preds_dem1_all[i][c] = self._decode_stage1(
+                    error_preds_stage1_all[i][c] = self._decode_stage1(
                         detector_outcomes_copy, c
                     )
                 else:
-                    preds_dem1_all[i][c] = self._decode_stage1(detector_outcomes, c)
+                    error_preds_stage1_all[i][c] = self._decode_stage1(
+                        detector_outcomes, c
+                    )
 
         # Erasure matcher predecoding
         if erasure_matcher_predecoding:
-            assert len(preds_dem1_all) > 1
+            assert len(error_preds_stage1_all) > 1
 
             if verbose:
                 print("Erasure matcher predecoding:")
@@ -1947,13 +1961,18 @@ class ColorCode:
                 predecoding_error_preds,  # in self.dem_xz
                 predecoding_weights,
                 predecoding_success,
-            ) = self._erasure_matcher_predecoding(preds_dem1_all, detector_outcomes)
+            ) = self._erasure_matcher_predecoding(
+                error_preds_stage1_all, detector_outcomes
+            )
 
             predecoding_failure = ~predecoding_success
             detector_outcomes_left = detector_outcomes[predecoding_failure, :]
-            preds_dem1_left = [
-                {c: arr[predecoding_failure, :] for c, arr in preds_dem1_all[i].items()}
-                for i in range(len(preds_dem1_all))
+            error_preds_stage1_left = [
+                {
+                    c: arr[predecoding_failure, :]
+                    for c, arr in error_preds_stage1_all[i].items()
+                }
+                for i in range(len(error_preds_stage1_all))
             ]
 
             if verbose:
@@ -1962,37 +1981,18 @@ class ColorCode:
                     predecoding_success.sum(),
                 )
 
-            if partial_correction_by_predecoding:
-                # When predecoding fails, use the predicted errors for partial correction
-                predecoding_error_preds_failed = predecoding_error_preds[
-                    predecoding_failure, :
-                ].astype("uint8")
-
-                def get_partial_corr(matrix):
-                    corr = (predecoding_error_preds_failed @ matrix.T) % 2
-                    return corr.astype(bool)
-
-                obs_partial_corr = get_partial_corr(self.obs_matrix)
-                det_partial_corr = get_partial_corr(self.H)
-                detector_outcomes_left ^= det_partial_corr
-                for c in ["r", "g", "b"]:
-                    error_map_matrix = self.dems_sym_decomposed[c][0].error_map_matrix
-                    preds_dem1_corr = (
-                        predecoding_error_preds_failed @ error_map_matrix.T
-                    ) % 2
-                    preds_dem1_corr = preds_dem1_corr.astype(bool)
-                    for preds_dem1_left_sng in preds_dem1_left:
-                        preds_dem1_left_sng[c] ^= preds_dem1_corr
-
         else:
             detector_outcomes_left = detector_outcomes
-            preds_dem1_left = preds_dem1_all
+            error_preds_stage1_left = error_preds_stage1_all
 
         # Second round
         if verbose:
             print("Second-round decoding:")
+
         num_left_samples = detector_outcomes_left.shape[0]
-        if num_left_samples > 0:
+        if num_left_samples > 0 and not (
+            erasure_matcher_predecoding and partial_correction_by_predecoding
+        ):
             # Number of errors should be the same for colors
             num_errors = self.H.shape[1]
             error_preds = np.empty(
@@ -2002,7 +2002,7 @@ class ColorCode:
             weights = np.empty(
                 (num_logical_classes, len(colors), num_left_samples), dtype=float
             )
-            for i in range(len(preds_dem1_left)):
+            for i in range(len(error_preds_stage1_left)):
                 for i_c, c in enumerate(colors):
                     if verbose:
                         print(f"    > logical class {i}, color {c}...")
@@ -2013,11 +2013,11 @@ class ColorCode:
                         else:
                             detector_outcomes_copy[:, -num_obs:] = all_logical_values[i]
                         error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_copy, preds_dem1_left[i][c], c
+                            detector_outcomes_copy, error_preds_stage1_left[i][c], c
                         )
                     else:
                         error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_left, preds_dem1_left[i][c], c
+                            detector_outcomes_left, error_preds_stage1_left[i][c], c
                         )
 
                     error_preds[i, i_c, :, :] = error_preds_new
@@ -2028,6 +2028,7 @@ class ColorCode:
             best_logical_classes, best_color_inds, weights_final, logical_gaps = (
                 _get_final_predictions(weights)
             )
+
             if colors == ["r", "g", "b"]:
                 best_colors = best_color_inds
             else:
@@ -2067,16 +2068,50 @@ class ColorCode:
 
             # Need to sort error_preds_final since dem_xz and second-round DEM have
             # different orders of errors
-            for i_c, c in enumerate(["r", "g", "b"]):
-                inds = self.dems_sym_decomposed[c][1].inds_probs_sorted(self.probs_xz)
-                inverse_inds_c = np.empty_like(inds)
-                inverse_inds_c[inds] = np.arange(len(inds))
+            if full_output:
+                for i_c, c in enumerate(["r", "g", "b"]):
+                    inds = self.dems_sym_decomposed[c][1].inds_probs_sorted(
+                        self.probs_xz
+                    )
+                    inverse_inds_c = np.empty_like(inds)
+                    inverse_inds_c[inds] = np.arange(len(inds))
 
-                mask = best_colors == i_c
-                if np.any(mask):
-                    error_preds_final[mask, :] = error_preds_final[mask][
-                        :, inverse_inds_c
-                    ]
+                    mask = best_colors == i_c
+                    if np.any(mask):
+                        error_preds_final[mask, :] = error_preds_final[mask][
+                            :, inverse_inds_c
+                        ]
+
+        elif (
+            num_left_samples > 0
+            and erasure_matcher_predecoding
+            and partial_correction_by_predecoding
+        ):
+            # Apply partial correction based on the predecoding results and then run
+            # the decoder again.
+
+            predecoding_error_preds_failed = predecoding_error_preds[
+                predecoding_failure, :
+            ].astype("uint8")
+
+            def get_partial_corr(matrix):
+                corr = (predecoding_error_preds_failed @ matrix.T) % 2
+                return corr.astype(bool)
+
+            obs_partial_corr = get_partial_corr(self.obs_matrix)
+            det_partial_corr = get_partial_corr(self.H)
+            detector_outcomes_left ^= det_partial_corr
+
+            obs_preds_final, extra_outputs = self.decode(
+                detector_outcomes_left, colors=colors, full_output=True
+            )
+
+            if obs_preds_final.ndim == 1:
+                obs_preds_final = obs_preds_final[:, np.newaxis]
+            error_preds_final = extra_outputs["error_preds"]
+            best_colors = extra_outputs["best_colors"]
+            weights_final = extra_outputs["weights"]
+            logical_gaps = extra_outputs["logical_gaps"]
 
         else:
             error_preds_final = np.array([[]], dtype=bool)
@@ -2090,30 +2125,35 @@ class ColorCode:
             if verbose:
                 print("Merging predecoding & second-round decoding outcomes")
             # For samples with successful predecoding, use the predecoding results
-            full_obs_preds_final = predecoding_obs_preds
-            full_best_colors = np.full(detector_outcomes.shape[0], "P")
-            full_weights_final = predecoding_weights
-            full_logical_gaps = np.full(detector_outcomes.shape[0], -1)
-            full_error_preds_final = predecoding_error_preds
+            full_obs_preds_final = predecoding_obs_preds.copy()
+            if full_output:
+                full_best_colors = np.full(detector_outcomes.shape[0], "P")
+                full_weights_final = predecoding_weights.copy()
+                full_logical_gaps = np.full(detector_outcomes.shape[0], -1)
+                full_error_preds_final = predecoding_error_preds.copy()
 
             # For samples with failed predecoding, use the second-round decoding results
             if detector_outcomes_left.shape[0] > 0:
                 if partial_correction_by_predecoding:
                     # Apply partial correction
                     obs_preds_final ^= obs_partial_corr
-                    error_preds_final ^= predecoding_error_preds_failed.astype(bool)
+                    if full_output:
+                        error_preds_final ^= predecoding_error_preds_failed.astype(bool)
 
                 full_obs_preds_final[predecoding_failure, :] = obs_preds_final
-                full_best_colors[predecoding_failure] = best_colors
-                full_weights_final[predecoding_failure] = weights_final
-                full_logical_gaps[predecoding_failure] = logical_gaps
-                full_error_preds_final[predecoding_failure, :] = error_preds_final
+
+                if full_output:
+                    full_best_colors[predecoding_failure] = best_colors
+                    full_weights_final[predecoding_failure] = weights_final
+                    full_logical_gaps[predecoding_failure] = logical_gaps
+                    full_error_preds_final[predecoding_failure, :] = error_preds_final
 
             obs_preds_final = full_obs_preds_final
-            best_colors = full_best_colors
-            weights_final = full_weights_final
-            logical_gaps = full_logical_gaps
-            error_preds_final = full_error_preds_final
+            if full_output:
+                best_colors = full_best_colors
+                weights_final = full_weights_final
+                logical_gaps = full_logical_gaps
+                error_preds_final = full_error_preds_final
 
         if obs_preds_final.shape[1] == 1:
             obs_preds_final = obs_preds_final.ravel()
@@ -2126,13 +2166,13 @@ class ColorCode:
                 "weights": weights_final,
                 "error_preds": error_preds_final,
             }
-            if len(preds_dem1_all) > 1:
+            if len(error_preds_stage1_all) > 1:
                 extra_outputs["logical_gaps"] = logical_gaps
                 extra_outputs["logical_values"] = all_logical_values
                 if erasure_matcher_predecoding:
                     extra_outputs["erasure_matcher_success"] = predecoding_success
                     extra_outputs["predecoding_error_preds"] = predecoding_error_preds
-
+                    extra_outputs["predecoding_obs_preds"] = predecoding_obs_preds
             if self.shape == "cult+growing":
                 extra_outputs.update(
                     {
@@ -2391,6 +2431,34 @@ class ColorCode:
         self,
         errors: np.ndarray,
     ) -> np.ndarray:
+        """
+        Convert errors (generated by `self.sample_with_errors`) or error predictions
+        (generated by `self.decode` or `self.simulate`) into the corresponding data
+        qubit indices.
+
+        Available only for `shape="tri"` and `shape="rec"` with `rounds=1` under
+        bit-flip noise (i.e., probabilities besides `p_bitflip` are 0).
+
+        Note: Errors and error predictions from `self.sample_with_errors`,
+        `self.decode`, or `self.simulate` follow the ordering of error mechanisms
+        in the circuit's detector error model (`self.circuit.detector_error_model()`).
+        This function is necessary because this ordering differs from the data qubit
+        ordering in the tanner graph (`self.tanner_graph.vs.select(pauli=None)`).
+        This conversion is especially helpful when visualizing errors or error
+        predictions on the lattice with `self.draw_lattice()`.
+
+        Parameters
+        ----------
+        errors : 2D numpy array of bool
+            Errors following the ordering of error mechanisms in the DEM of the circuit
+            `self.circuit.detector_error_model()`.
+
+        Returns
+        -------
+        errors_qubits : 2D numpy array of bool
+            Errors following the ordering of data qubits in the tanner graph
+            `self.tanner_graph.vs.select(pauli=None)`.
+        """
 
         if self.shape not in {"tri", "rec"}:
             raise NotImplementedError(
@@ -2444,44 +2512,6 @@ class ColorCode:
                     )
                 data_qubit_idx_to_em[data_qubit_idx] = i_em
         assert np.all(data_qubit_idx_to_em != -1)
-
-        # if in_decomposed_dem:
-        #     assert color is not None
-        #     if errors.ndim == 1:
-        #         if color == 0:
-        #             color = "r"
-        #         elif color == 1:
-        #             color = "g"
-        #         elif color == 2:
-        #             color = "b"
-        #         inds = self.dems_sym_decomposed[color][1].inds_probs_sorted(
-        #             self.probs_xz
-        #         )
-        #         inverse_inds = np.empty_like(inds)
-        #         inverse_inds[inds] = np.arange(len(inds))
-        #         errors = errors[..., inverse_inds]
-
-        #     else:
-        #         color = np.asarray(color)
-        #         if color.dtype == "<U1":
-        #             color_int = np.empty(len(color), dtype=np.uint8)
-        #             color_int[color == "r"] = 0
-        #             color_int[color == "g"] = 1
-        #             color_int[color == "b"] = 2
-        #             color = color_int
-        #         else:
-        #             color = color.astype(np.uint8)
-
-        #         for i_c, c in enumerate(["r", "g", "b"]):
-        #             inds = self.dems_sym_decomposed[c][1].inds_probs_sorted(
-        #                 self.probs_xz
-        #             )
-        #             inverse_inds_c = np.empty_like(inds)
-        #             inverse_inds_c[inds] = np.arange(len(inds))
-
-        #             mask = color == i_c
-        #             if np.any(mask):
-        #                 errors[mask, :] = errors[mask][:, inverse_inds_c]
 
         return errors[..., data_qubit_idx_to_em]
 
