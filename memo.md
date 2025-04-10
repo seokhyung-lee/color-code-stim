@@ -19,3 +19,6 @@
         - Other qubits
             - (0, 1) -> (7, 1)
             - (1, 3) -> (5, 3)
+    - TODO: d=5
+        - why showing worse performance than growing even when p_cult = 0?
+        - why raising error when d=5 for comparative decoding?

@@ -1,8 +1,10 @@
+import functools
 import time
-from functools import wraps
+from functools import update_wrapper, wraps
 from pathlib import Path
 from typing import (
     Callable,
+    Optional,
     ParamSpec,
     Tuple,
     TypeVar,
@@ -75,3 +77,68 @@ def get_pfail(
 def get_project_folder() -> Path:
     project_folder = Path(__file__).resolve().parents[2]
     return project_folder
+
+
+def _get_final_predictions(
+    weights: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+    """
+    Finds the best logical class and color index that minimizes the weight
+    for each sample from a 3D weights array, and calculates the gap between
+    the best and second-best logical class minimum weights.
+
+    Parameters
+    ----------
+    weights : np.ndarray
+        A 3D float array with shape (num_logical_classes, num_colors, num_samples).
+        `weights[i, c, j]` is the weight for the j-th sample, i-th logical
+        class, and c-th color index.
+
+    Returns
+    -------
+    best_logical_classes : np.ndarray
+        1D int array. The index of the best logical class for each sample.
+    best_color_indices : np.ndarray
+        1D int array. The index of the best color for each sample.
+    weights_final : np.ndarray
+        1D float array. The minimum weight found for each sample.
+    logical_gap : Optional[np.ndarray]
+        1D float array or None. The difference between the second smallest and
+        smallest minimum weight across logical classes for each sample.
+        Calculated only if `num_logical_classes > 1`.
+    """
+    if weights.ndim != 3 or weights.size == 0:
+        raise ValueError(f"Invalid input shape: {weights.shape}")
+
+    num_logical_classes, num_colors, num_samples = weights.shape
+
+    # 1. Find the overall minimum weight and its index for each sample
+    # Reshape to (logical_class * color, sample) to find the flat index of the min
+    reshaped_weights = weights.reshape(num_logical_classes * num_colors, num_samples)
+
+    flat_min_indices = np.argmin(reshaped_weights, axis=0)
+    weights_final = np.min(
+        reshaped_weights, axis=0
+    )  # Or: reshaped_weights[flat_min_indices, np.arange(num_samples)]
+
+    # 2. Decode the flat index back into logical class and color index
+    best_logical_classes = flat_min_indices // num_colors
+    best_color_indices = flat_min_indices % num_colors
+
+    # 3. Calculate logical_gap if needed
+    logical_gap: Optional[np.ndarray] = None
+    if num_logical_classes > 1:
+        # Find the minimum weight per logical class for each sample
+        # Shape: (num_logical_classes, num_samples)
+        min_weights_per_class = np.min(weights, axis=1)  # Min across color axis
+
+        # Sort along the logical class axis to find the smallest two
+        # Shape: (num_logical_classes, num_samples)
+        sorted_min_weights = np.sort(min_weights_per_class, axis=0)
+
+        # Calculate the gap between the second smallest and the smallest
+        # Shape: (num_samples,)
+        logical_gap = sorted_min_weights[1] - sorted_min_weights[0]
+
+    # Return best_color_indices directly instead of mapped string colors
+    return best_logical_classes, best_color_indices, weights_final, logical_gap
