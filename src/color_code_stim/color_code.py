@@ -20,11 +20,11 @@ import numpy as np
 import pymatching
 import stim
 from ldpc import BpDecoder
-from scipy.sparse import csc_matrix
+from scipy.sparse import csc_matrix, csr_matrix
 from statsmodels.stats.proportion import proportion_confint
 
 from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
-from .stim_symbolic import _DemSymbolic
+from .dem_decomp import DemDecomp
 from .stim_utils import (
     dem_to_parity_check,
     remove_obs_from_dem,
@@ -41,36 +41,31 @@ class ColorCode:
     tanner_graph: ig.Graph
     circuit: stim.Circuit
     d: int
+    d2: Optional[int]
     rounds: int
+    circuit_type: str
     temp_bdry_type: Literal["X", "Y", "Z", "r", "g", "b"]
+    cnot_schedule: Union[str, Tuple[int, ...]]
+    num_obs: int
     qubit_groups: Dict[str, ig.VertexSeq]
     obs_paulis: List[PAULI_LABEL]
     dem_xz: stim.DetectorErrorModel
     H: csc_matrix
     probs_xz: np.ndarray
     obs_matrix: csc_matrix
-    _bp_inputs: Dict[str, Any]
-    detectors: List[Tuple[ig.Vertex, int]]
-    detector_ids: Dict[COLOR_LABEL, List[int]]
+    detector_ids_by_color: Dict[COLOR_LABEL, List[int]]
+    detectors_checks_map: List[Tuple[ig.Vertex, int]]
     cult_detector_ids: List[int]
     interface_detector_ids: List[int]
-    circuit_type: str
-    num_obs: int
-    d2: Optional[int]
-    cnot_schedule: Union[str, Tuple[int, ...]]
+    dems_decomposed: Dict[COLOR_LABEL, DemDecomp]
     perfect_init_final: bool
-    probs: Dict[str, float]
-    comparative_decoding: bool
-    use_last_detectors: bool
-    cultivation_circuit: Optional[stim.Circuit]
-    benchmarking: bool
-    dems_sym_decomposed: Dict[COLOR_LABEL, Tuple[_DemSymbolic, _DemSymbolic]]
-    dems_decomposed: Dict[
-        COLOR_LABEL, Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]
+    physical_probs: Dict[
+        Literal["bitflip", "reset", "meas", "cnot", "idle", "cult"], float
     ]
-    Hs_decomposed: Dict[COLOR_LABEL, Tuple[csc_matrix, csc_matrix]]
-    probs_decomposed: Dict[COLOR_LABEL, Tuple[np.ndarray, np.ndarray]]
-    obs_matrices_stage2: Dict[COLOR_LABEL, csc_matrix]
+    comparative_decoding: bool
+    cultivation_circuit: Optional[stim.Circuit]
+    _benchmarking: bool
+    _bp_inputs: Dict[str, Any]
 
     def __init__(
         self,
@@ -91,11 +86,10 @@ class ColorCode:
         cultivation_circuit: Optional[stim.Circuit] = None,
         perfect_init_final: bool = False,
         comparative_decoding: bool = False,
-        use_last_detectors: bool = True,
-        generate_dem: bool = True,
-        decompose_dem: bool = True,
         remove_non_edge_like_errors: bool = True,
         shape: str = None,
+        _generate_dem: bool = True,
+        _decompose_dem: bool = True,
         _benchmarking: bool = False,
     ):
         """
@@ -164,14 +158,9 @@ class ColorCode:
             Whether to use perfect initialization and final measurement.
         comparative_decoding : bool, default False
             Whether to use the comparative decoding technique. If True, observables are included as additional detectors and decoding can be done by running the decoder for each logical class and choosing the lowest-weight one. This also provides the logical gap information, which quantifies the reliability of decoding.
-        use_last_detectors : bool, default True
-            Whether to use detectors from the last round.
-        generate_dem : bool, default True
-            Whether to generate the detector error model in advance.
-        decompose_dem: bool, default True
-            Whether to decompose the detector error model in advance.
         remove_non_edge_like_errors: bool, default True
-            Whether to remove error mechanisms that are not edge-like.
+            Whether to remove error mechanisms that are not edge-like when decomposing
+            the detector error model.
         shape: str, optional
             Legacy parameter same as `circuit_type` for backward compatability. If this
             is given, it is prioritized over `circuit_type`.
@@ -229,7 +218,7 @@ class ColorCode:
             self.num_obs = 1
 
         else:
-            raise ValueError("Invalid shape")
+            raise ValueError(f"Invalid circuit type: {circuit_type}")
 
         if temp_bdry_type is None:
             if circuit_type == "rec_stability":
@@ -252,7 +241,7 @@ class ColorCode:
 
         self.cnot_schedule = cnot_schedule
         self.perfect_init_final = perfect_init_final
-        self.probs = {
+        self.physical_probs = {
             "bitflip": p_bitflip,
             "reset": p_reset,
             "meas": p_meas,
@@ -260,13 +249,11 @@ class ColorCode:
             "idle": p_idle,
         }
         if self.circuit_type == "cult+growing":
-            self.probs["cult"] = p_cult if p_cult is not None else p_circuit
+            self.physical_probs["cult"] = p_cult if p_cult is not None else p_circuit
         self.comparative_decoding = comparative_decoding
 
         if self.comparative_decoding and self.circuit_type == "rec_stability":
             raise NotImplementedError
-
-        self.use_last_detectors = use_last_detectors
 
         if self.circuit_type == "cult+growing":
             if cultivation_circuit is None:
@@ -289,16 +276,13 @@ class ColorCode:
 
         self.tanner_graph = ig.Graph()
 
-        self.benchmarking = _benchmarking
+        self._benchmarking = _benchmarking
 
         # Mapping between detector ids and ancillary qubits
-        # self.detectors[detector_id] = (anc_qubit, time_coord)
-        self.detectors = []
+        # self.detectors_checks_map[detector_id] = (anc_qubit, time_coord)
+        self.detectors_checks_map = []
 
-        # Detector ids grouped by colors
-        self.detector_ids = {"r": [], "g": [], "b": []}
-
-        # Various qubit groups
+        # Various qubit groups predefined for efficiency
         self.qubit_groups = {}
 
         tanner_graph = self.tanner_graph
@@ -316,6 +300,11 @@ class ColorCode:
         # flag = -2, -1: cultivation / interface between cultivation and growing
         # (only for `cult+growing` circuits)
         detector_coords_dict = self.circuit.get_detector_coordinates()
+        self.detector_ids_by_color = {
+            "r": [],
+            "g": [],
+            "b": [],
+        }
         self.cult_detector_ids = []
         self.interface_detector_ids = []
 
@@ -342,26 +331,26 @@ class ColorCode:
                 if pauli == 0:
                     name = f"{x}-{y}-X"
                     qubit = tanner_graph.vs.find(name=name)
+                    color = qubit["color"]
                 elif pauli == 2:
                     name = f"{x}-{y}-Z"
                     qubit = tanner_graph.vs.find(name=name)
+                    color = qubit["color"]
                 elif pauli == 1:
                     name_X = f"{x}-{y}-X"
                     name_Z = f"{x}-{y}-Z"
                     qubit_X = tanner_graph.vs.find(name=name_X)
                     qubit_Z = tanner_graph.vs.find(name=name_Z)
                     qubit = (qubit_X, qubit_Z)
+                    color = qubit_X["color"]
                 else:
                     print(coords)
                     raise ValueError(f"Invalid pauli: {pauli}")
 
-                qubit = tanner_graph.vs.find(name=name)
-                self.detectors.append((qubit, t))
-                color = qubit["color"]
+                self.detectors_checks_map.append((qubit, t))
+                self.detector_ids_by_color[color].append(detector_id)
 
-            self.detector_ids[color].append(detector_id)
-
-        if generate_dem:
+        if _generate_dem:
             circuit_xz = separate_depolarizing_errors(self.circuit)
             dem_xz = circuit_xz.detector_error_model(flatten_loops=True)
             if self.circuit_type == "cult+growing":
@@ -419,16 +408,15 @@ class ColorCode:
         self._bp_inputs = {}
 
         # Decompose detector error models
-        self.dems_sym_decomposed = {}
         self.dems_decomposed = {}
-        self.Hs_decomposed = {}
-        self.probs_decomposed = {}
-        self.obs_matrices_stage2 = {}  # no observables for stage 1
-        if generate_dem and decompose_dem:
+        if _generate_dem and _decompose_dem:
             for c in ["r", "g", "b"]:
-                self.decompose_dem(
-                    c, remove_non_edge_like_errors=remove_non_edge_like_errors
+                dem_decomp = DemDecomp(
+                    org_dem=self.dem_xz,
+                    color=c,
+                    remove_non_edge_like_errors=remove_non_edge_like_errors,
                 )
+                self.dems_decomposed[c] = dem_decomp
 
     def get_detector_type(self, detector_id: int) -> Tuple[PAULI_LABEL, COLOR_LABEL]:
         coords = self.circuit.get_detector_coordinates(only=[detector_id])[detector_id]
@@ -450,11 +438,11 @@ class ColorCode:
 
     @timeit
     def _create_tanner_graph(self):
-        shape = self.circuit_type
+        circuit_type = self.circuit_type
         tanner_graph = self.tanner_graph
 
-        if shape in {"tri", "growing", "cult+growing"}:
-            if shape == "tri":
+        if circuit_type in {"tri", "growing", "cult+growing"}:
+            if circuit_type == "tri":
                 d = self.d
             else:
                 d = self.d2
@@ -486,9 +474,9 @@ class ColorCode:
                     if not boundary:
                         boundary = None
 
-                    if shape in {"tri"}:
+                    if circuit_type in {"tri"}:
                         obs = boundary in ["r", "rg", "rb"]
-                    elif shape in {"growing", "cult+growing"}:
+                    elif circuit_type in {"growing", "cult+growing"}:
                         obs = boundary in ["g", "gb", "rg"]
                     else:
                         obs = False
@@ -518,7 +506,7 @@ class ColorCode:
                             )
                             detid += 1
 
-        elif shape == "rec":
+        elif circuit_type == "rec":
             d, d2 = self.d, self.d2
             assert d % 2 == 0
             assert d2 % 2 == 0
@@ -593,7 +581,7 @@ class ColorCode:
                 boundary="rg",
             )
 
-        elif shape == "rec_stability":
+        elif circuit_type == "rec_stability":
             d = self.d
             d2 = self.d2
             assert d % 2 == 0
@@ -664,7 +652,7 @@ class ColorCode:
                             detid += 1
 
         else:
-            raise ValueError("Invalid shape")
+            raise ValueError(f"Invalid circuit type: {circuit_type}")
 
         # Update qubit_groups
         data_qubits = tanner_graph.vs.select(pauli=None)
@@ -737,25 +725,11 @@ class ColorCode:
 
     @staticmethod
     def color_to_color_val(color: Literal["r", "g", "b"]) -> int:
-        if color == "r":
-            return 0
-        elif color == "g":
-            return 1
-        elif color == "b":
-            return 2
-        else:
-            raise ValueError(f"Invalid color: {color}")
+        return {"r": 0, "g": 1, "b": 2}[color]
 
     @staticmethod
-    def color_val_to_color(color_val: int) -> Literal["r", "g", "b"]:
-        if color_val == 0:
-            return "r"
-        elif color_val == 1:
-            return "g"
-        elif color_val == 2:
-            return "b"
-        else:
-            raise ValueError(f"Invalid color value: {color_val}")
+    def color_val_to_color(color_val: Literal[0, 1, 2]) -> Literal["r", "g", "b"]:
+        return {0: "r", 1: "g", 2: "b"}[color_val]
 
     @timeit
     def _generate_circuit(self) -> stim.Circuit:
@@ -763,11 +737,11 @@ class ColorCode:
         cnot_schedule = self.cnot_schedule
         tanner_graph = self.tanner_graph
         rounds = self.rounds
-        shape = self.circuit_type
+        circuit_type = self.circuit_type
         d = self.d
         d2 = self.d2
         temp_bdry_type = self.temp_bdry_type
-        probs = self.probs
+        probs = self.physical_probs
         p_bitflip = probs["bitflip"]
         p_reset = probs["reset"]
         p_meas = probs["meas"]
@@ -775,7 +749,7 @@ class ColorCode:
         p_idle = probs["idle"]
 
         perfect_init_final = self.perfect_init_final
-        use_last_detectors = self.use_last_detectors
+        use_last_detectors = True
 
         data_qubits = qubit_groups["data"]
         anc_qubits = qubit_groups["anc"]
@@ -796,16 +770,16 @@ class ColorCode:
         all_qids = list(range(num_qubits))
         all_qids_set = set(all_qids)
 
-        if shape == "rec_stability":
+        if circuit_type == "rec_stability":
             red_links = [
                 [link.source, link.target] for link in tanner_graph.es.select(color="r")
             ]
             red_links = np.array(red_links)
             data_q1s = red_links[:, 0]
             data_q2s = red_links[:, 1]
-        elif shape in {"tri", "rec"}:
+        elif circuit_type in {"tri", "rec"}:
             red_links = data_q1s = data_q2s = None
-        elif shape in {"growing", "cult+growing"}:
+        elif circuit_type in {"growing", "cult+growing"}:
             x_offset_init_patch = 6 * round((d2 - d) / 2)
             y_offset_init_patch = 3 * round((d2 - d) / 2)
             data_qubits_outside_init_patch = data_qubits.select(
@@ -830,12 +804,14 @@ class ColorCode:
             coords = self.get_qubit_coords(qubit)
             circuit.append("QUBIT_COORDS", qubit.index, coords)
 
-        if shape == "cult+growing":
+        if circuit_type == "cult+growing":
             qubit_coords = {}
             for qubit in tanner_graph.vs:
                 coords = self.get_qubit_coords(qubit)
                 qubit_coords[qubit.index] = coords
-            cult_circuit = _load_cultivation_circuit(self.d, self.probs["cult"])
+            cult_circuit = _load_cultivation_circuit(
+                self.d, self.physical_probs["cult"]
+            )
             cult_circuit, interface_detectors_info = _reformat_cultivation_circuit(
                 cult_circuit,
                 self.d,
@@ -940,16 +916,16 @@ class ColorCode:
                         synd_extr_circuit.append("DETECTOR", targets, det_coords)
 
                     else:
-                        if shape in {"tri", "rec"}:
+                        if circuit_type in {"tri", "rec"}:
                             detector_exists = temp_bdry_type == pauli
-                        elif shape == "rec_stability":
+                        elif circuit_type == "rec_stability":
                             detector_exists = color != "r"
-                        elif shape == "growing":
+                        elif circuit_type == "growing":
                             if coords[1] >= y_offset_init_patch:
                                 detector_exists = temp_bdry_type == pauli
                             else:
                                 detector_exists = color != "r"
-                        elif shape == "cult+growing":
+                        elif circuit_type == "cult+growing":
                             detector_exists = (
                                 coords[1] >= y_offset_init_patch or color != "r"
                             )
@@ -962,7 +938,7 @@ class ColorCode:
                             # For cult+growing, need to add targets during cultivation
                             # if anc_qubit is inside the initial patch.
                             if (
-                                shape == "cult+growing"
+                                circuit_type == "cult+growing"
                                 and coords[1] >= y_offset_init_patch
                             ):
                                 # Add detector targets during cultivation
@@ -1008,17 +984,17 @@ class ColorCode:
                             synd_extr_circuit.append("DETECTOR", targets, det_coords)
 
             ## Y-type detectors
-            if first and temp_bdry_type == "Y" and shape != "cult+growing":
+            if first and temp_bdry_type == "Y" and circuit_type != "cult+growing":
                 for j_Z, anc_qubit_Z in enumerate(anc_Z_qubits):
                     anc_qubit_Z: ig.Vertex
                     color = anc_qubit_Z["color"]
                     coords = self.get_qubit_coords(anc_qubit_Z)
 
-                    if shape in {"tri", "rec"}:
+                    if circuit_type in {"tri", "rec"}:
                         detector_exists = True
-                    elif shape == "rec_stability":
+                    elif circuit_type == "rec_stability":
                         detector_exists = color != "r"
-                    elif shape == "growing":
+                    elif circuit_type == "growing":
                         detector_exists = coords[1] >= y_offset_init_patch
                     else:
                         raise NotImplementedError
@@ -1051,7 +1027,7 @@ class ColorCode:
             synd_extr_circuits.append(synd_extr_circuit)
 
         # Initialize qubits
-        if temp_bdry_type in {"X", "Y", "Z"} and shape not in {
+        if temp_bdry_type in {"X", "Y", "Z"} and circuit_type not in {
             "growing",
             "cult+growing",
         }:
@@ -1073,7 +1049,7 @@ class ColorCode:
             if p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
 
-        elif shape == "growing":
+        elif circuit_type == "growing":
             # Data qubits inside the initial patch
             data_qids_init_patch = data_qubits.select(y_ge=y_offset_init_patch)["qid"]
             circuit.append(f"R{temp_bdry_type}", data_qids_init_patch)
@@ -1094,7 +1070,7 @@ class ColorCode:
             if p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
 
-        elif shape == "cult+growing":
+        elif circuit_type == "cult+growing":
             # Find last tick position
             for i in range(len(circuit) - 1, -1, -1):
                 instruction = circuit[i]
@@ -1273,20 +1249,20 @@ class ColorCode:
 
         # Logical observables
         if temp_bdry_type in {"X", "Y", "Z"}:
-            if shape in {"tri", "growing", "cult+growing"}:
+            if circuit_type in {"tri", "growing", "cult+growing"}:
                 qubits_logs = [tanner_graph.vs.select(obs=True)]
-                if shape == "tri":
+                if circuit_type == "tri":
                     bdry_colors = [0]
-                elif shape == "growing":
+                elif circuit_type == "growing":
                     bdry_colors = [1]
-                elif shape == "cult+growing":
+                elif circuit_type == "cult+growing":
                     bdry_colors = [1]
 
             # elif shape == "cult+growing":
             #     qubits_logs = [tanner_graph.vs.select(pauli=None)]
             #     bdry_colors = [1]
 
-            elif shape == "rec":
+            elif circuit_type == "rec":
                 qubits_log_r = tanner_graph.vs.select(obs_r=True)
                 qubits_log_g = tanner_graph.vs.select(obs_g=True)
                 qubits_logs = [qubits_log_r, qubits_log_g]
@@ -1446,284 +1422,284 @@ class ColorCode:
             Round that the detector belongs to.
         """
         try:
-            return self.detectors[detector_id]
+            return self.detectors_checks_map[detector_id]
         except IndexError:
             raise ValueError(f"Detector ID {detector_id} not found.")
 
-    def _decompose_dem_symbolic(
-        self,
-        color: COLOR_LABEL,
-        remove_non_edge_like_errors: bool = True,
-        _decompose_pauli: bool = True,
-        _benchmarking: bool = False,
-    ) -> Tuple[_DemSymbolic, _DemSymbolic]:
-        """
-        Decompose the detector error model (DEM) of the circuit into the
-        restricted and monochromatic DEMs of a given color in symbolic form.
+    # def _decompose_dem_symbolic(
+    #     self,
+    #     color: COLOR_LABEL,
+    #     remove_non_edge_like_errors: bool = True,
+    #     _decompose_pauli: bool = True,
+    #     _benchmarking: bool = False,
+    # ) -> Tuple[_DemSymbolic, _DemSymbolic]:
+    #     """
+    #     Decompose the detector error model (DEM) of the circuit into the
+    #     restricted and monochromatic DEMs of a given color in symbolic form.
 
-        Parameters
-        ----------
-        color : {'r', 'g', 'b'}
-            Color of the decomposed DEMs.
-        remove_non_edge_like_errors : bool, default True
-            Whether to remove error mechanisms that are not edge-like.
+    #     Parameters
+    #     ----------
+    #     color : {'r', 'g', 'b'}
+    #         Color of the decomposed DEMs.
+    #     remove_non_edge_like_errors : bool, default True
+    #         Whether to remove error mechanisms that are not edge-like.
 
-        Returns
-        -------
-        dem1, dem2: _DemSymbolic
-            Restricted and monochromatic DEMs of the given color, respectively, in
-            symbolic form.
-        """
-        try:
-            return self.dems_sym_decomposed[color]
-        except KeyError:
-            pass
+    #     Returns
+    #     -------
+    #     dem1, dem2: _DemSymbolic
+    #         Restricted and monochromatic DEMs of the given color, respectively, in
+    #         symbolic form.
+    #     """
+    #     try:
+    #         return self.dems_sym_decomposed[color]
+    #     except KeyError:
+    #         pass
 
-        # Set of detector ids to be reduced
-        det_ids_to_reduce = set(self.detector_ids[color])
+    #     # Set of detector ids to be reduced
+    #     det_ids_to_reduce = set(self.detector_ids[color])
 
-        # stability_exp = self.circuit_type == "rec_stability"
+    #     # stability_exp = self.circuit_type == "rec_stability"
 
-        t0 = time.time()
+    #     t0 = time.time()
 
-        # Original XZ-decomposed DEM
-        dem_xz = self.dem_xz
-        # probs_xz = self.probs_xz
-        num_org_error_sources = dem_xz.num_errors
-        num_detectors = dem_xz.num_detectors
-        dem_xz_dets = dem_xz[num_org_error_sources:]
-        dem_xz_errors = dem_xz[:num_org_error_sources]
+    #     # Original XZ-decomposed DEM
+    #     dem_xz = self.dem_xz
+    #     # probs_xz = self.probs_xz
+    #     num_org_error_sources = dem_xz.num_errors
+    #     num_detectors = dem_xz.num_detectors
+    #     dem_xz_dets = dem_xz[num_org_error_sources:]
+    #     dem_xz_errors = dem_xz[:num_org_error_sources]
 
-        if _benchmarking:
-            print(time.time() - t0)
-            t0 = time.time()
+    #     if _benchmarking:
+    #         print(time.time() - t0)
+    #         t0 = time.time()
 
-        # Decompose into X and Z errors
-        # (i.e., ignore correlations between X and Z errors)
-        # Already decomposed in circuit_xz, so no need to do it again
-        # pauli_decomposed_targets_dict = {}
-        # pauli_decomposed_probs_dict = {}
+    #     # Decompose into X and Z errors
+    #     # (i.e., ignore correlations between X and Z errors)
+    #     # Already decomposed in circuit_xz, so no need to do it again
+    #     # pauli_decomposed_targets_dict = {}
+    #     # pauli_decomposed_probs_dict = {}
 
-        # for i_inst, inst in enumerate(dem_xz_errors):
-        #     targets = inst.targets_copy()
-        #     new_targets = {"Z": [], "X": [], 'Y': []}
-        #     new_target_ids = {"Z": set(), "X": set(), "Y": set()}
+    #     # for i_inst, inst in enumerate(dem_xz_errors):
+    #     #     targets = inst.targets_copy()
+    #     #     new_targets = {"Z": [], "X": [], 'Y': []}
+    #     #     new_target_ids = {"Z": set(), "X": set(), "Y": set()}
 
-        #     for target in targets:
-        #         if target.is_logical_observable_id():
-        #             obsid = int(str(target)[1:])
-        #             obs_pauli = self.obs_paulis[obsid]
-        #             new_targets[obs_pauli].append(target)
-        #             new_target_ids[obs_pauli].add(f"L{obsid}")
+    #     #     for target in targets:
+    #     #         if target.is_logical_observable_id():
+    #     #             obsid = int(str(target)[1:])
+    #     #             obs_pauli = self.obs_paulis[obsid]
+    #     #             new_targets[obs_pauli].append(target)
+    #     #             new_target_ids[obs_pauli].add(f"L{obsid}")
 
-        #         else:
-        #             detid = int(str(target)[1:])
-        #             try:
-        #                 pauli = self.get_detector_type(detid)[0]
-        #             except IndexError:
-        #                 pauli = "X" if stability_exp and detid else "Z"
+    #     #         else:
+    #     #             detid = int(str(target)[1:])
+    #     #             try:
+    #     #                 pauli = self.get_detector_type(detid)[0]
+    #     #             except IndexError:
+    #     #                 pauli = "X" if stability_exp and detid else "Z"
 
-        #             new_targets[pauli].append(target)
-        #             new_target_ids[pauli].add(detid)
+    #     #             new_targets[pauli].append(target)
+    #     #             new_target_ids[pauli].add(detid)
 
-        #     if new_targets['Z'] and not new_targets['X']:
-        #         pauli = 'Z'
-        #     elif new_targets['X'] and not new_targets['Z']:
-        #         pauli = 'X'
-        #     else:
-        #         pauli = 'Y'
+    #     #     if new_targets['Z'] and not new_targets['X']:
+    #     #         pauli = 'Z'
+    #     #     elif new_targets['X'] and not new_targets['Z']:
+    #     #         pauli = 'X'
+    #     #     else:
+    #     #         pauli = 'Y'
 
-        #     for pauli in ["Z", "X"]:
-        #         new_targets_pauli = new_targets[pauli]
-        #         if new_targets_pauli:
-        #             new_target_ids_pauli = frozenset(new_target_ids[pauli])
-        #             try:
-        #                 pauli_decomposed_probs_dict[new_target_ids_pauli].append(i_inst)
-        #             except KeyError:
-        #                 pauli_decomposed_probs_dict[new_target_ids_pauli] = [i_inst]
-        #                 pauli_decomposed_targets_dict[new_target_ids_pauli] = (
-        #                     new_targets_pauli
-        #                 )
+    #     #     for pauli in ["Z", "X"]:
+    #     #         new_targets_pauli = new_targets[pauli]
+    #     #         if new_targets_pauli:
+    #     #             new_target_ids_pauli = frozenset(new_target_ids[pauli])
+    #     #             try:
+    #     #                 pauli_decomposed_probs_dict[new_target_ids_pauli].append(i_inst)
+    #     #             except KeyError:
+    #     #                 pauli_decomposed_probs_dict[new_target_ids_pauli] = [i_inst]
+    #     #                 pauli_decomposed_targets_dict[new_target_ids_pauli] = (
+    #     #                     new_targets_pauli
+    #     #                 )
 
-        pauli_decomposed_targets_dict = {}
-        pauli_decomposed_probs_dict = {}
-        for i_em, em in enumerate(dem_xz_errors):
-            targets = em.targets_copy()
-            target_labels = []
-            detids = []
-            for target in targets:
-                if target.is_relative_detector_id():
-                    detid = int(str(target)[1:])
-                    target_labels.append(detid)
-                    detids.append(detid)
-                elif target.is_logical_observable_id():
-                    target_labels.append(f"L{str(target)[1:]}")
-                else:
-                    raise ValueError(f"Unknown target: {target}")
-            det_paulis = [self.get_detector_type(detid)[0] for detid in detids]
-            if "X" in det_paulis and "Z" in det_paulis and _decompose_pauli:
-                target_labels_X = []
-                targets_X = []
-                target_labels_Z = []
-                targets_Z = []
-                for i_label, (target, label) in enumerate(zip(targets, target_labels)):
-                    if not isinstance(label, str) and det_paulis[i_label] == "X":
-                        target_labels_X.append(label)
-                        targets_X.append(target)
-                    else:
-                        target_labels_Z.append(label)
-                        targets_Z.append(target)
-                target_labels_X = frozenset(target_labels_X)
-                pauli_decomposed_targets_dict[target_labels_X] = targets_X
-                pauli_decomposed_probs_dict[target_labels_X] = [i_em]
-                target_labels_Z = frozenset(target_labels_Z)
-                pauli_decomposed_targets_dict[target_labels_Z] = targets_Z
-                pauli_decomposed_probs_dict[target_labels_Z] = [i_em]
-            else:
-                target_labels = frozenset(target_labels)
-                pauli_decomposed_targets_dict[target_labels] = targets
-                pauli_decomposed_probs_dict[target_labels] = [i_em]
+    #     pauli_decomposed_targets_dict = {}
+    #     pauli_decomposed_probs_dict = {}
+    #     for i_em, em in enumerate(dem_xz_errors):
+    #         targets = em.targets_copy()
+    #         target_labels = []
+    #         detids = []
+    #         for target in targets:
+    #             if target.is_relative_detector_id():
+    #                 detid = int(str(target)[1:])
+    #                 target_labels.append(detid)
+    #                 detids.append(detid)
+    #             elif target.is_logical_observable_id():
+    #                 target_labels.append(f"L{str(target)[1:]}")
+    #             else:
+    #                 raise ValueError(f"Unknown target: {target}")
+    #         det_paulis = [self.get_detector_type(detid)[0] for detid in detids]
+    #         if "X" in det_paulis and "Z" in det_paulis and _decompose_pauli:
+    #             target_labels_X = []
+    #             targets_X = []
+    #             target_labels_Z = []
+    #             targets_Z = []
+    #             for i_label, (target, label) in enumerate(zip(targets, target_labels)):
+    #                 if not isinstance(label, str) and det_paulis[i_label] == "X":
+    #                     target_labels_X.append(label)
+    #                     targets_X.append(target)
+    #                 else:
+    #                     target_labels_Z.append(label)
+    #                     targets_Z.append(target)
+    #             target_labels_X = frozenset(target_labels_X)
+    #             pauli_decomposed_targets_dict[target_labels_X] = targets_X
+    #             pauli_decomposed_probs_dict[target_labels_X] = [i_em]
+    #             target_labels_Z = frozenset(target_labels_Z)
+    #             pauli_decomposed_targets_dict[target_labels_Z] = targets_Z
+    #             pauli_decomposed_probs_dict[target_labels_Z] = [i_em]
+    #         else:
+    #             target_labels = frozenset(target_labels)
+    #             pauli_decomposed_targets_dict[target_labels] = targets
+    #             pauli_decomposed_probs_dict[target_labels] = [i_em]
 
-        if _benchmarking:
-            print(time.time() - t0)
-            t0 = time.time()
+    #     if _benchmarking:
+    #         print(time.time() - t0)
+    #         t0 = time.time()
 
-        # Obtain targets list for the two steps
-        # dem1_targets_dict = {}
-        dem1_probs_dict = {}
-        dem1_dets_dict = {}
-        dem1_obss_dict = {}
-        dem1_virtual_obs_dict = {}
+    #     # Obtain targets list for the two steps
+    #     # dem1_targets_dict = {}
+    #     dem1_probs_dict = {}
+    #     dem1_dets_dict = {}
+    #     dem1_obss_dict = {}
+    #     dem1_virtual_obs_dict = {}
 
-        # dem2_targets_list = []
-        dem2_probs = []
-        dem2_dets = []
-        dem2_obss = []
+    #     # dem2_targets_list = []
+    #     dem2_probs = []
+    #     dem2_dets = []
+    #     dem2_obss = []
 
-        for target_ids in pauli_decomposed_targets_dict:
-            targets = pauli_decomposed_targets_dict[target_ids]
-            prob = pauli_decomposed_probs_dict[target_ids]
+    #     for target_ids in pauli_decomposed_targets_dict:
+    #         targets = pauli_decomposed_targets_dict[target_ids]
+    #         prob = pauli_decomposed_probs_dict[target_ids]
 
-            dem1_dets_sng = []
-            dem1_obss_sng = []
-            dem2_dets_sng = []
-            dem2_obss_sng = []
-            dem1_det_ids = set()
+    #         dem1_dets_sng = []
+    #         dem1_obss_sng = []
+    #         dem2_dets_sng = []
+    #         dem2_obss_sng = []
+    #         dem1_det_ids = set()
 
-            for target in targets:
-                if target.is_logical_observable_id():
-                    dem2_obss_sng.append(target)
-                else:
-                    det_id = int(str(target)[1:])
-                    if det_id in det_ids_to_reduce:
-                        dem2_dets_sng.append(target)
-                    else:
-                        dem1_dets_sng.append(target)
-                        dem1_det_ids.add(det_id)
+    #         for target in targets:
+    #             if target.is_logical_observable_id():
+    #                 dem2_obss_sng.append(target)
+    #             else:
+    #                 det_id = int(str(target)[1:])
+    #                 if det_id in det_ids_to_reduce:
+    #                     dem2_dets_sng.append(target)
+    #                 else:
+    #                     dem1_dets_sng.append(target)
+    #                     dem1_det_ids.add(det_id)
 
-            if remove_non_edge_like_errors:
-                if dem1_dets_sng:
-                    if len(dem1_dets_sng) >= 3 or len(dem2_dets_sng) >= 2:
-                        continue
-                else:
-                    if len(dem2_dets_sng) >= 3:
-                        continue
+    #         if remove_non_edge_like_errors:
+    #             if dem1_dets_sng:
+    #                 if len(dem1_dets_sng) >= 3 or len(dem2_dets_sng) >= 2:
+    #                     continue
+    #             else:
+    #                 if len(dem2_dets_sng) >= 3:
+    #                     continue
 
-            if dem1_det_ids:
-                dem1_det_ids = frozenset(dem1_det_ids)
-                try:
-                    dem1_probs_dict[dem1_det_ids].extend(prob)
-                    virtual_obs = dem1_virtual_obs_dict[dem1_det_ids]
-                except KeyError:
-                    virtual_obs = len(dem1_probs_dict)
-                    # dem1_obss_sng.append(stim.target_logical_observable_id(virtual_obs))
-                    dem1_probs_dict[dem1_det_ids] = prob
-                    dem1_dets_dict[dem1_det_ids] = dem1_dets_sng
-                    dem1_obss_dict[dem1_det_ids] = dem1_obss_sng
-                    dem1_virtual_obs_dict[dem1_det_ids] = virtual_obs
+    #         if dem1_det_ids:
+    #             dem1_det_ids = frozenset(dem1_det_ids)
+    #             try:
+    #                 dem1_probs_dict[dem1_det_ids].extend(prob)
+    #                 virtual_obs = dem1_virtual_obs_dict[dem1_det_ids]
+    #             except KeyError:
+    #                 virtual_obs = len(dem1_probs_dict)
+    #                 # dem1_obss_sng.append(stim.target_logical_observable_id(virtual_obs))
+    #                 dem1_probs_dict[dem1_det_ids] = prob
+    #                 dem1_dets_dict[dem1_det_ids] = dem1_dets_sng
+    #                 dem1_obss_dict[dem1_det_ids] = dem1_obss_sng
+    #                 dem1_virtual_obs_dict[dem1_det_ids] = virtual_obs
 
-                virtual_det_id = num_detectors + virtual_obs
-                dem2_dets_sng.append(stim.target_relative_detector_id(virtual_det_id))
+    #             virtual_det_id = num_detectors + virtual_obs
+    #             dem2_dets_sng.append(stim.target_relative_detector_id(virtual_det_id))
 
-            # Add a virtual observable to dem2 for distinguishing error sources
-            # L0: real observable. L1, L2, ...: virtual observables.
-            dem2_dets.append(dem2_dets_sng)
-            dem2_obss.append(dem2_obss_sng)
-            dem2_probs.append(prob)
+    #         # Add a virtual observable to dem2 for distinguishing error sources
+    #         # L0: real observable. L1, L2, ...: virtual observables.
+    #         dem2_dets.append(dem2_dets_sng)
+    #         dem2_obss.append(dem2_obss_sng)
+    #         dem2_probs.append(prob)
 
-        if _benchmarking:
-            print(time.time() - t0)
-            t0 = time.time()
+    #     if _benchmarking:
+    #         print(time.time() - t0)
+    #         t0 = time.time()
 
-        # Convert dem1 information to lists
-        dem1_probs = list(dem1_probs_dict.values())
-        dem1_dets = [dem1_dets_dict[key] for key in dem1_probs_dict]
-        dem1_obss = [dem1_obss_dict[key] for key in dem1_probs_dict]
+    #     # Convert dem1 information to lists
+    #     dem1_probs = list(dem1_probs_dict.values())
+    #     dem1_dets = [dem1_dets_dict[key] for key in dem1_probs_dict]
+    #     dem1_obss = [dem1_obss_dict[key] for key in dem1_probs_dict]
 
-        # Convert to _DemSymbolic objects
-        dem1_sym = _DemSymbolic(
-            dem1_probs, dem1_dets, dem1_obss, dem_xz_dets, dem_xz.num_errors
-        )
-        dem2_sym = _DemSymbolic(
-            dem2_probs, dem2_dets, dem2_obss, dem_xz_dets, dem_xz.num_errors
-        )
+    #     # Convert to _DemSymbolic objects
+    #     dem1_sym = _DemSymbolic(
+    #         dem1_probs, dem1_dets, dem1_obss, dem_xz_dets, dem_xz.num_errors
+    #     )
+    #     dem2_sym = _DemSymbolic(
+    #         dem2_probs, dem2_dets, dem2_obss, dem_xz_dets, dem_xz.num_errors
+    #     )
 
-        # dem1_sym.decompose_complex_error_mechanisms()
-        # dem2_sym.decompose_complex_error_mechanisms()
+    #     # dem1_sym.decompose_complex_error_mechanisms()
+    #     # dem2_sym.decompose_complex_error_mechanisms()
 
-        self.dems_sym_decomposed[color] = dem1_sym, dem2_sym
+    #     self.dems_sym_decomposed[color] = dem1_sym, dem2_sym
 
-        return dem1_sym, dem2_sym
+    #     return dem1_sym, dem2_sym
 
-    def decompose_dem(
-        self,
-        color: COLOR_LABEL,
-        remove_non_edge_like_errors: bool = True,
-        _decompose_pauli: bool = True,
-        _benchmarking: bool = False,
-    ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
-        """
-        Decompose the detector error model (DEM) of the circuit into the
-        restricted and monochromatic DEMs of a given color.
+    # def decompose_dem(
+    #     self,
+    #     color: COLOR_LABEL,
+    #     remove_non_edge_like_errors: bool = True,
+    #     _decompose_pauli: bool = True,
+    #     _benchmarking: bool = False,
+    # ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
+    #     """
+    #     Decompose the detector error model (DEM) of the circuit into the
+    #     restricted and monochromatic DEMs of a given color.
 
-        Parameters
-        ----------
-        color : {'r', 'g', 'b'}
-            Color of the decomposed DEMs.
-        remove_non_edge_like_errors : bool, default True
-            Whether to remove error mechanisms that are not edge-like.
+    #     Parameters
+    #     ----------
+    #     color : {'r', 'g', 'b'}
+    #         Color of the decomposed DEMs.
+    #     remove_non_edge_like_errors : bool, default True
+    #         Whether to remove error mechanisms that are not edge-like.
 
-        Returns
-        -------
-        dem1, dem2: stim.DetectorErrorModel
-            Restricted and monochromatic DEMs of the given color, respectively.
-        """
-        # assert method_handling_correlated_errors in ['ignore', 'other']
+    #     Returns
+    #     -------
+    #     dem1, dem2: stim.DetectorErrorModel
+    #         Restricted and monochromatic DEMs of the given color, respectively.
+    #     """
+    #     # assert method_handling_correlated_errors in ['ignore', 'other']
 
-        try:
-            return self.dems_decomposed[color]
-        except KeyError:
-            pass
+    #     try:
+    #         return self.dems_decomposed[color]
+    #     except KeyError:
+    #         pass
 
-        dem1_sym, dem2_sym = self._decompose_dem_symbolic(
-            color,
-            remove_non_edge_like_errors=remove_non_edge_like_errors,
-            _decompose_pauli=_decompose_pauli,
-            _benchmarking=_benchmarking,
-        )
+    #     dem1_sym, dem2_sym = self._decompose_dem_symbolic(
+    #         color,
+    #         remove_non_edge_like_errors=remove_non_edge_like_errors,
+    #         _decompose_pauli=_decompose_pauli,
+    #         _benchmarking=_benchmarking,
+    #     )
 
-        probs_xz = self.probs_xz
-        dem1 = dem1_sym.to_dem(probs_xz)
-        dem2 = dem2_sym.to_dem(probs_xz, sort=True)
-        self.dems_decomposed[color] = dem1, dem2
+    #     probs_xz = self.probs_xz
+    #     dem1 = dem1_sym.to_dem(probs_xz)
+    #     dem2 = dem2_sym.to_dem(probs_xz, sort=True)
+    #     self.dems_decomposed[color] = dem1, dem2
 
-        H_dem1, _, p_dem1 = dem_to_parity_check(dem1)
-        H_dem2, obs_matrix_dem2, p_dem2 = dem_to_parity_check(dem2)
-        self.Hs_decomposed[color] = H_dem1, H_dem2
-        self.probs_decomposed[color] = p_dem1, p_dem2
-        self.obs_matrices_stage2[color] = obs_matrix_dem2
+    #     H_dem1, _, p_dem1 = dem_to_parity_check(dem1)
+    #     H_dem2, obs_matrix_dem2, p_dem2 = dem_to_parity_check(dem2)
+    #     self.Hs_decomposed[color] = H_dem1, H_dem2
+    #     self.probs_decomposed[color] = p_dem1, p_dem2
+    #     self.obs_matrices_stage2[color] = obs_matrix_dem2
 
-        return dem1, dem2
+    #     return dem1, dem2
 
     def decode_bp(
         self,
@@ -1801,7 +1777,7 @@ class ColorCode:
         erasure_matcher_predecoding: bool = False,
         partial_correction_by_predecoding: bool = False,
         full_output: bool = False,
-        return_error_preds: bool = False,
+        check_validity: bool = False,
         verbose: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, dict]:
         """
@@ -1809,11 +1785,12 @@ class ColorCode:
 
         Parameters
         ----------
-        detector_outcomes : 2D array-like of bool
-            Array of input detector outcomes. Each row corresponds to a sample
-            and each column corresponds to a detector. detector_outcomes[i, j]
-            is True if and only if the detector with id j in the ith sample has
-            the outcome −1.
+        detector_outcomes : 1D or 2D array-like of bool
+            Array of input detector outcomes for one or multiple samples.
+            If 1D, it is interpreted as a single sample.
+            If 2D, each row corresponds to a sample and each column corresponds to a
+            detector. detector_outcomes[i, j] is True if and only if the detector with
+            id j in the ith sample has the outcome −1.
         colors : str or list of str, default 'all'
             Colors to use for decoding. Can be 'all', one of {'r', 'g', 'b'},
             or a list containing any combination of {'r', 'g', 'b'}.
@@ -1832,11 +1809,8 @@ class ColorCode:
             partial correction for the second round of decoding, in the case that the predecoding fails to find a valid prediction.
         full_output : bool, default False
             Whether to return extra information about the decoding process.
-        return_error_preds : bool, default False
-            Whether to include the error predictions in the extra information dict
-            (`extra_outputs["error_preds"]`), following the ordering of error mechanisms
-            in the Pauli-decomposed DEM (`self.dem_xz`). `full_output` must be True to
-            use this. Currently not implemented for "cult+growing" circuits.
+        check_validity : bool, default False
+            Whether to check the validity of the predicted error patterns.
         verbose : bool, default False
             Whether to print additional information during decoding.
 
@@ -1848,13 +1822,15 @@ class ColorCode:
             if the j-th observable (j=0 when 1D) of the i-th sample is
             predicted to be -1.
         extra_outputs : dict, only when full_output is True
-            Dictionary containing additional decoding results.
+            Dictionary containing additional decoding outputs.
         """
 
         if erasure_matcher_predecoding:
             assert self.comparative_decoding
 
         detector_outcomes = np.asarray(detector_outcomes, dtype=bool)
+        if detector_outcomes.ndim == 1:
+            detector_outcomes = detector_outcomes.reshape(1, -1)
 
         if colors == "all":
             colors = ["r", "g", "b"]
@@ -1884,7 +1860,7 @@ class ColorCode:
             for det_outcomes_sng in detector_outcomes:
                 dems = {}
                 for c in colors:
-                    dem1_sym, dem2_sym = self._decompose_dem_symbolic(c)
+                    dem1_sym, dem2_sym = self.dems_decomposed[c].dems_symbolic
                     dem1 = dem1_sym.to_dem(self._bp_inputs["p"])
                     dem2 = dem2_sym.to_dem(self._bp_inputs["p"], sort=True)
                     dems[c] = (dem1, dem2)
@@ -1917,17 +1893,14 @@ class ColorCode:
 
         if self.circuit_type == "cult+growing":
             # Post-select based on the detector outcomes within cultivation
-            accepted_cult = ~np.any(
-                detector_outcomes[:, self.cult_detector_ids], axis=1
-            )
             cult_interface_det_ids = (
                 self.cult_detector_ids + self.interface_detector_ids
             )
-            accepted_interface = ~np.any(
+            cult_accepted = ~np.any(
                 detector_outcomes[:, cult_interface_det_ids], axis=1
             )
 
-            detector_outcomes = detector_outcomes[accepted_interface, :]
+            detector_outcomes = detector_outcomes[cult_accepted, :]
 
         # First round
         num_logical_classes = (
@@ -2000,12 +1973,7 @@ class ColorCode:
         if num_left_samples > 0 and not (
             erasure_matcher_predecoding and partial_correction_by_predecoding
         ):
-            # Number of errors should be the same for colors
-            num_errors_colors = [Hs[1].shape[1] for Hs in self.Hs_decomposed.values()]
-            assert (
-                len(set(num_errors_colors)) == 1
-            ), f"Number of errors in second-round DEMs should be the same for all colors. Found {num_errors_colors}."
-            num_errors = num_errors_colors[0]
+            num_errors = self.H.shape[1]
 
             error_preds = np.empty(
                 (num_logical_classes, len(colors), num_left_samples, num_errors),
@@ -2032,6 +2000,11 @@ class ColorCode:
                             detector_outcomes_left, error_preds_stage1_left[i][c], c
                         )
 
+                    # Adjust to fit the original error order in self.dem_xz
+                    error_preds_new = self.dems_decomposed[c].map_errors_to_org_dem(
+                        error_preds_new, stage=2
+                    )
+
                     error_preds[i, i_c, :, :] = error_preds_new
                     weights[i, i_c, :] = weights_new
 
@@ -2040,19 +2013,6 @@ class ColorCode:
             best_logical_classes, best_color_inds, weights_final, logical_gaps = (
                 _get_final_predictions(weights)
             )
-
-            if colors == ["r", "g", "b"]:
-                best_colors = best_color_inds
-            else:
-                colors_int = []
-                for c in colors:
-                    if c == "r":
-                        colors_int.append(0)
-                    elif c == "g":
-                        colors_int.append(1)
-                    else:
-                        colors_int.append(2)
-                best_colors = np.array(colors_int)[best_color_inds]
 
             error_preds_final = error_preds[
                 best_logical_classes, best_color_inds, np.arange(num_left_samples), :
@@ -2072,32 +2032,20 @@ class ColorCode:
                 # Need to calculate observable predictions from error predictions
                 obs_preds_final = np.empty((num_left_samples, num_obs), dtype=bool)
                 for i_c, c in enumerate(colors):
-                    obs_matrix = self.obs_matrices_stage2[c]
+                    obs_matrix = self.obs_matrix
+                    # obs_matrix = self.dems_decomposed[c].obs_matrix_stage2
                     mask = best_color_inds == i_c
                     obs_preds_final[mask, :] = (
                         (error_preds_final[mask, :].astype("uint8") @ obs_matrix.T) % 2
                     ).astype(bool)
 
-            # Need to sort error_preds_final since dem_xz and second-round DEM have
-            # different orders of errors
-            # Not supported for "cult+growing" shape
-            if full_output and return_error_preds:
-                if self.circuit_type == "cult+growing":
-                    raise NotImplementedError(
-                        "Sorting error predictions for 'cult+growing' shape is not implemented."
-                    )
-                for i_c, c in enumerate(["r", "g", "b"]):
-                    inds = self.dems_sym_decomposed[c][1].inds_probs_sorted(
-                        self.probs_xz
-                    )
-                    inverse_inds_c = np.empty_like(inds)
-                    inverse_inds_c[inds] = np.arange(len(inds))
-
-                    mask = best_colors == i_c
-                    if np.any(mask):
-                        error_preds_final[mask, :] = error_preds_final[mask][
-                            :, inverse_inds_c
-                        ]
+            # Adjust best_colors in case colors != ["r", "g", "b"]
+            if colors == ["r", "g", "b"]:
+                best_colors = best_color_inds
+            else:
+                best_colors = np.array([self.color_to_val[c] for c in colors])[
+                    best_color_inds
+                ]
 
         elif (
             num_left_samples > 0
@@ -2123,7 +2071,6 @@ class ColorCode:
                 detector_outcomes_left,
                 colors=colors,
                 full_output=full_output,
-                return_error_preds=return_error_preds,
             )
             if full_output:
                 obs_preds_final, extra_outputs = obs_preds_final
@@ -2134,8 +2081,7 @@ class ColorCode:
                 obs_preds_final = obs_preds_final[:, np.newaxis]
 
             if full_output:
-                if return_error_preds:
-                    error_preds_final = extra_outputs["error_preds"]
+                error_preds_final = extra_outputs["error_preds"]
                 best_colors = extra_outputs["best_colors"]
                 weights_final = extra_outputs["weights"]
                 logical_gaps = extra_outputs["logical_gaps"]
@@ -2157,15 +2103,14 @@ class ColorCode:
                 full_best_colors = np.full(detector_outcomes.shape[0], "P")
                 full_weights_final = predecoding_weights.copy()
                 full_logical_gaps = np.full(detector_outcomes.shape[0], -1)
-                if return_error_preds:
-                    full_error_preds_final = predecoding_error_preds.copy()
+                full_error_preds_final = predecoding_error_preds.copy()
 
             # For samples with failed predecoding, use the second-round decoding results
             if detector_outcomes_left.shape[0] > 0:
                 if partial_correction_by_predecoding:
                     # Apply partial correction
                     obs_preds_final ^= obs_partial_corr
-                    if full_output and return_error_preds:
+                    if full_output:
                         error_preds_final ^= predecoding_error_preds_failed.astype(bool)
 
                 full_obs_preds_final[predecoding_failure, :] = obs_preds_final
@@ -2174,18 +2119,23 @@ class ColorCode:
                     full_best_colors[predecoding_failure] = best_colors
                     full_weights_final[predecoding_failure] = weights_final
                     full_logical_gaps[predecoding_failure] = logical_gaps
-                    if return_error_preds:
-                        full_error_preds_final[predecoding_failure, :] = (
-                            error_preds_final
-                        )
+                    full_error_preds_final[predecoding_failure, :] = error_preds_final
 
             obs_preds_final = full_obs_preds_final
             if full_output:
                 best_colors = full_best_colors
                 weights_final = full_weights_final
                 logical_gaps = full_logical_gaps
-                if return_error_preds:
-                    error_preds_final = full_error_preds_final
+                error_preds_final = full_error_preds_final
+
+        if check_validity:
+            det_preds = (error_preds_final.astype("uint8") @ self.H.T % 2).astype(bool)
+            validity = np.all(det_preds == detector_outcomes, axis=1)
+            if verbose:
+                if np.all(validity):
+                    print("All predictions are valid")
+                else:
+                    print(f"{np.sum(~validity)} invalid predictions found!")
 
         if obs_preds_final.shape[1] == 1:
             obs_preds_final = obs_preds_final.ravel()
@@ -2194,9 +2144,8 @@ class ColorCode:
             extra_outputs = {
                 "best_colors": best_colors,
                 "weights": weights_final,
+                "error_preds": error_preds_final,
             }
-            if return_error_preds:
-                extra_outputs["error_preds"] = error_preds_final
 
             if len(error_preds_stage1_all) > 1:
                 extra_outputs["logical_gaps"] = logical_gaps
@@ -2206,12 +2155,10 @@ class ColorCode:
                     extra_outputs["predecoding_error_preds"] = predecoding_error_preds
                     extra_outputs["predecoding_obs_preds"] = predecoding_obs_preds
             if self.circuit_type == "cult+growing":
-                extra_outputs.update(
-                    {
-                        "accepted_only_cult": accepted_cult,
-                        "accepted": accepted_interface,
-                    }
-                )
+                extra_outputs["cult_accepted"] = cult_accepted
+
+            if check_validity:
+                extra_outputs["validity"] = validity
 
         if full_output:
             return obs_preds_final, extra_outputs
@@ -2220,8 +2167,10 @@ class ColorCode:
 
     def _decode_stage1(self, detector_outcomes: np.ndarray, color: str) -> np.ndarray:
         det_outcomes_dem1 = detector_outcomes.copy()
-        det_outcomes_dem1[:, self.detector_ids[color]] = False
-        H, p = self.Hs_decomposed[color][0], self.probs_decomposed[color][0]
+        H, p = self.dems_decomposed[color].Hs[0], self.dems_decomposed[color].probs[0]
+        checks_to_keep = H.tocsr().getnnz(axis=1) > 0
+        det_outcomes_dem1 = det_outcomes_dem1[:, checks_to_keep]
+        H = H[checks_to_keep, :]
         weights = np.log((1 - p) / p)
         matching = pymatching.Matching.from_check_matrix(H, weights=weights)
         preds_dem1 = matching.decode_batch(det_outcomes_dem1)
@@ -2233,23 +2182,21 @@ class ColorCode:
         self,
         detector_outcomes: np.ndarray,
         preds_dem1: np.ndarray,
-        color: str,
+        color: COLOR_LABEL,
     ) -> Tuple[np.ndarray, np.ndarray]:
         det_outcome_dem2 = detector_outcomes.copy()
         mask = np.full_like(det_outcome_dem2, True)
-        mask[:, self.detector_ids[color]] = False
+        mask[:, self.detector_ids_by_color[color]] = False
         det_outcome_dem2[mask] = False
         del mask
         det_outcome_dem2 = np.concatenate([det_outcome_dem2, preds_dem1], axis=1)
 
-        H, p = self.Hs_decomposed[color][1], self.probs_decomposed[color][1]
+        H, p = self.dems_decomposed[color].Hs[1], self.dems_decomposed[color].probs[1]
         weights = np.log((1 - p) / p)
         matching = pymatching.Matching.from_check_matrix(H, weights=weights)
         preds, weights_new = matching.decode_batch(
             det_outcome_dem2, return_weights=True
         )
-        del det_outcome_dem2, matching
-
         return preds, weights_new
 
     def _find_error_set_intersection(
@@ -2494,7 +2441,9 @@ class ColorCode:
                 "errors_to_qubits is only available when rounds = 1."
             )
 
-        if any(prob > 0 for key, prob in self.probs.items() if key != "bitflip"):
+        if any(
+            prob > 0 for key, prob in self.physical_probs.items() if key != "bitflip"
+        ):
             raise NotImplementedError(
                 "errors_to_qubits is only available under bit-flip noise "
                 "(only p_bitflip is nonzero)."
@@ -2526,7 +2475,7 @@ class ColorCode:
                 anc_qids = [
                     self.get_detector(det_id)[0].index
                     for det_id in det_ids
-                    if det_id < len(self.detectors)
+                    if det_id < len(self.detectors_checks_map)
                 ]
                 anc_qids = frozenset(anc_qids)
                 data_qubit_idx = anc_qids_to_data_qubit_idx[anc_qids]
@@ -2553,6 +2502,7 @@ class ColorCode:
         full_output: bool = False,
         seed: Optional[int] = None,
         verbose: bool = False,
+        **kwargs,
     ) -> Tuple[np.ndarray, dict]:
         """
         Monte-Carlo simulation of the concatenated MWPM decoder.
@@ -2583,6 +2533,8 @@ class ColorCode:
             Seed to initialize the random number generator.
         verbose : bool, default False
             If True, print progress information during simulation.
+        **kwargs :
+            Additional keyword arguments for the decoder (see `ColorCode.decode()`).
 
         Returns
         -------
@@ -2616,6 +2568,7 @@ class ColorCode:
             full_output=full_output,
             erasure_matcher_predecoding=erasure_matcher_predecoding,
             partial_correction_by_predecoding=partial_correction_by_predecoding,
+            **kwargs,
         )
 
         if full_output:
