@@ -10,7 +10,9 @@ from src.color_code_stim import ColorCode
 
 def task(shots_batch, d, p):
     seed = np.random.randint(0, 2**32)
-    cc = ColorCode(d=d, rounds=1, shape="tri", p_bitflip=p, comparative_decoding=True)
+    cc = ColorCode(
+        d=d, rounds=1, circuit_type="tri", p_bitflip=p, comparative_decoding=True
+    )
     nfails_org = cc.simulate(shots_batch, seed=seed)
     nfails_em = cc.simulate(shots_batch, erasure_matcher_predecoding=True, seed=seed)
     nfails_empc = cc.simulate(
