@@ -144,7 +144,7 @@ class _DemSymbolic:
 
     def to_dem(
         self, prob_vals: Sequence[float], sort: bool = False
-    ) -> stim.DetectorErrorModel:
+    ) -> Tuple[stim.DetectorErrorModel, np.ndarray]:
         prob_vals = np.asarray(prob_vals, dtype="float64")
 
         probs = [
@@ -155,7 +155,7 @@ class _DemSymbolic:
         if sort:
             inds = np.argsort(probs, kind="stable")[::-1]
         else:
-            inds = range(len(probs))
+            inds = np.arange(len(probs))
 
         dem = stim.DetectorErrorModel()
         for i in inds:
@@ -169,7 +169,7 @@ class _DemSymbolic:
 
         dem += self.dets_org
 
-        return dem
+        return dem, inds
 
     def non_edge_like_errors_exist(self) -> bool:
         for e in self._ems:

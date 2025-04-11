@@ -1,6 +1,6 @@
 import functools
 import time
-from functools import update_wrapper, wraps
+from functools import wraps
 from pathlib import Path
 from typing import (
     Callable,
@@ -21,7 +21,7 @@ R = TypeVar("R")  # For return type
 def timeit(func: Callable[P, R]) -> Callable[P, R]:
     @wraps(func)
     def wrap(*args: P.args, **kwargs: P.kwargs) -> R:
-        if args[0].benchmarking:
+        if args[0]._benchmarking:
             start = time.time()
             res = func(*args, **kwargs)
             elapsed = time.time() - start
