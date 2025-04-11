@@ -3,7 +3,7 @@ from typing import Dict, FrozenSet, List, Literal, Optional, Sequence, Tuple, Un
 
 import stim
 
-from src.color_code_stim.utils import get_project_folder
+from .utils import get_project_folder
 
 
 def _load_cultivation_circuit(d: int, p: float) -> stim.Circuit:
