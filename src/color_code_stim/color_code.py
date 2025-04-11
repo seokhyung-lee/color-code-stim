@@ -95,7 +95,7 @@ class ColorCode:
         generate_dem: bool = True,
         decompose_dem: bool = True,
         remove_non_edge_like_errors: bool = True,
-        shape: str = "tri",
+        shape: str = None,
         _benchmarking: bool = False,
     ):
         """
@@ -172,8 +172,9 @@ class ColorCode:
             Whether to decompose the detector error model in advance.
         remove_non_edge_like_errors: bool, default True
             Whether to remove error mechanisms that are not edge-like.
-        shape: str, default 'tri'
-            Legacy parameter same as `circuit_type` for backward compatability.
+        shape: str, optional
+            Legacy parameter same as `circuit_type` for backward compatability. If this
+            is given, it is prioritized over `circuit_type`.
         """
         if isinstance(cnot_schedule, str):
             if cnot_schedule in ["tri_optimal", "LLB"]:
@@ -193,6 +194,9 @@ class ColorCode:
         self.d = d
         d2 = self.d2 = d if d2 is None else d2
         self.rounds = rounds
+
+        if shape is not None:
+            circuit_type = shape
 
         if circuit_type in {"triangle", "tri"}:
             assert d % 2 == 1
