@@ -54,7 +54,7 @@ class ColorCode:
     detector_ids: Dict[COLOR_LABEL, List[int]]
     cult_detector_ids: List[int]
     interface_detector_ids: List[int]
-    shape: str
+    circuit_type: str
     num_obs: int
     d2: Optional[int]
     cnot_schedule: Union[str, Tuple[int, ...]]
@@ -77,7 +77,7 @@ class ColorCode:
         *,
         d: int,
         rounds: int,
-        shape: str = "tri",
+        circuit_type: str = "tri",
         d2: int = None,
         cnot_schedule: Union[str, Sequence[int]] = "tri_optimal",
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
@@ -95,7 +95,8 @@ class ColorCode:
         generate_dem: bool = True,
         decompose_dem: bool = True,
         remove_non_edge_like_errors: bool = True,
-        benchmarking: bool = False,
+        shape: str = "tri",
+        _benchmarking: bool = False,
     ):
         """
         Class for constructing a color code circuit and simulating the
@@ -107,7 +108,7 @@ class ColorCode:
             Code distance. Should be an odd number of 3 or more.
         rounds : int >= 1
             Number of syndrome extraction rounds.
-        shape : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing',
+        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing',
                 'cult+growing'}, default 'tri'
             Circuit type.
             - 'triangle'/'tri': memory experiment of a triangular patch with distance
@@ -158,7 +159,7 @@ class ColorCode:
             Physical error probability during cultivation (only used for 'cult+growing'
             circuits). If not given, `p_cult = p_circuit`.
         cultivation_circuit: stim.Circuit, optional
-            If given, it is used as the cultivation circuit for cultivation + growing circuit (`shape == 'cult+growing'`). WARNING: Its validity is not checked internally.
+            If given, it is used as the cultivation circuit for cultivation + growing circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not checked internally.
         perfect_init_final : bool, default False
             Whether to use perfect initialization and final measurement.
         comparative_decoding : bool, default False
@@ -171,8 +172,8 @@ class ColorCode:
             Whether to decompose the detector error model in advance.
         remove_non_edge_like_errors: bool, default True
             Whether to remove error mechanisms that are not edge-like.
-        benchmarking : bool, default False
-            Whether to measure execution time of each step.
+        shape: str, default 'tri'
+            Legacy parameter same as `circuit_type` for backward compatability.
         """
         if isinstance(cnot_schedule, str):
             if cnot_schedule in ["tri_optimal", "LLB"]:
@@ -193,54 +194,54 @@ class ColorCode:
         d2 = self.d2 = d if d2 is None else d2
         self.rounds = rounds
 
-        if shape in {"triangle", "tri"}:
+        if circuit_type in {"triangle", "tri"}:
             assert d % 2 == 1
-            self.shape = "tri"
+            self.circuit_type = "tri"
             self.num_obs = 1
 
-        elif shape in {"rectangle", "rec"}:
+        elif circuit_type in {"rectangle", "rec"}:
             assert d2 is not None
             assert d % 2 == 0 and d2 % 2 == 0
-            self.shape = "rec"
+            self.circuit_type = "rec"
             self.num_obs = 2
 
-        elif shape == "rec_stability":
+        elif circuit_type == "rec_stability":
             assert d2 is not None
             assert d % 2 == 0 and d2 % 2 == 0
-            self.shape = "rec_stability"
+            self.circuit_type = "rec_stability"
             self.num_obs = 2
 
-        elif shape == "growing":
+        elif circuit_type == "growing":
             assert d2 is not None
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
-            self.shape = "growing"
+            self.circuit_type = "growing"
             self.num_obs = 1
 
-        elif shape in {"cultivation+growing", "cult+growing"}:
+        elif circuit_type in {"cultivation+growing", "cult+growing"}:
             assert p_circuit is not None and p_bitflip == 0
             assert d2 is not None
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
-            self.shape = "cult+growing"
+            self.circuit_type = "cult+growing"
             self.num_obs = 1
 
         else:
             raise ValueError("Invalid shape")
 
         if temp_bdry_type is None:
-            if shape == "rec_stability":
+            if circuit_type == "rec_stability":
                 temp_bdry_type = "r"
-            elif shape == "cult+growing":
+            elif circuit_type == "cult+growing":
                 temp_bdry_type = "Y"
             else:
                 temp_bdry_type = "Z"
         else:
             assert temp_bdry_type in {"X", "Y", "Z", "x", "y", "z"}
-            assert shape not in {"rec_stability", "cult+growing"}
+            assert circuit_type not in {"rec_stability", "cult+growing"}
             temp_bdry_type = temp_bdry_type.upper()
 
         self.temp_bdry_type = temp_bdry_type
 
-        if shape == "rec_stability":
+        if circuit_type == "rec_stability":
             self.obs_paulis = ["Z", "X"]
         else:
             self.obs_paulis = [temp_bdry_type] * self.num_obs
@@ -254,16 +255,16 @@ class ColorCode:
             "cnot": p_cnot,
             "idle": p_idle,
         }
-        if self.shape == "cult+growing":
+        if self.circuit_type == "cult+growing":
             self.probs["cult"] = p_cult if p_cult is not None else p_circuit
         self.comparative_decoding = comparative_decoding
 
-        if self.comparative_decoding and self.shape == "rec_stability":
+        if self.comparative_decoding and self.circuit_type == "rec_stability":
             raise NotImplementedError
 
         self.use_last_detectors = use_last_detectors
 
-        if self.shape == "cult+growing":
+        if self.circuit_type == "cult+growing":
             if cultivation_circuit is None:
                 project_folder = get_project_folder()
                 try:
@@ -284,7 +285,7 @@ class ColorCode:
 
         self.tanner_graph = ig.Graph()
 
-        self.benchmarking = benchmarking
+        self.benchmarking = _benchmarking
 
         # Mapping between detector ids and ancillary qubits
         # self.detectors[detector_id] = (anc_qubit, time_coord)
@@ -316,7 +317,7 @@ class ColorCode:
 
         for detector_id in range(self.circuit.num_detectors):
             coords = detector_coords_dict[detector_id]
-            if self.shape == "cult+growing" and len(coords) == 6:
+            if self.circuit_type == "cult+growing" and len(coords) == 6:
                 # The detector is in the cultivation circuit or the interface region
                 flag = coords[-1]
                 if flag == -1:
@@ -359,7 +360,7 @@ class ColorCode:
         if generate_dem:
             circuit_xz = separate_depolarizing_errors(self.circuit)
             dem_xz = circuit_xz.detector_error_model(flatten_loops=True)
-            if self.shape == "cult+growing":
+            if self.circuit_type == "cult+growing":
                 # Remove error mechanisms that involve detectors that will be post-selected
                 dem_xz_new = stim.DetectorErrorModel()
                 all_detids_in_dem_xz = set()
@@ -445,7 +446,7 @@ class ColorCode:
 
     @timeit
     def _create_tanner_graph(self):
-        shape = self.shape
+        shape = self.circuit_type
         tanner_graph = self.tanner_graph
 
         if shape in {"tri", "growing", "cult+growing"}:
@@ -758,7 +759,7 @@ class ColorCode:
         cnot_schedule = self.cnot_schedule
         tanner_graph = self.tanner_graph
         rounds = self.rounds
-        shape = self.shape
+        shape = self.circuit_type
         d = self.d
         d2 = self.d2
         temp_bdry_type = self.temp_bdry_type
@@ -1477,7 +1478,7 @@ class ColorCode:
         # Set of detector ids to be reduced
         det_ids_to_reduce = set(self.detector_ids[color])
 
-        # stability_exp = self.shape == "rec_stability"
+        # stability_exp = self.circuit_type == "rec_stability"
 
         t0 = time.time()
 
@@ -1795,8 +1796,8 @@ class ColorCode:
         bp_prms: dict | None = None,
         erasure_matcher_predecoding: bool = False,
         partial_correction_by_predecoding: bool = False,
-        errors_as_qubits: bool = False,
         full_output: bool = False,
+        return_error_preds: bool = False,
         verbose: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, dict]:
         """
@@ -1825,12 +1826,13 @@ class ColorCode:
         partial_correction_by_predecoding : bool, default False
             Whether to use the prediction from the erasure matcher predecoding as a
             partial correction for the second round of decoding, in the case that the predecoding fails to find a valid prediction.
-        errors_as_qubits : bool, default False
-            Sort the error prediction by the order of data qubits in the tanner graph.
-            Available only for `shape="tri"` and `shape="rec"` with `rounds=1' under
-            bit-flip noise. (Raises error otherwise)
         full_output : bool, default False
-            Whether to return additional information about the decoding process.
+            Whether to return extra information about the decoding process.
+        return_error_preds : bool, default False
+            Whether to include the error predictions in the extra information dict
+            (`extra_outputs["error_preds"]`), following the ordering of error mechanisms
+            in the Pauli-decomposed DEM (`self.dem_xz`). `full_output` must be True to
+            use this. Currently not implemented for "cult+growing" circuits.
         verbose : bool, default False
             Whether to print additional information during decoding.
 
@@ -1909,7 +1911,7 @@ class ColorCode:
             else:
                 return error_preds
 
-        if self.shape == "cult+growing":
+        if self.circuit_type == "cult+growing":
             # Post-select based on the detector outcomes within cultivation
             accepted_cult = ~np.any(
                 detector_outcomes[:, self.cult_detector_ids], axis=1
@@ -1995,7 +1997,12 @@ class ColorCode:
             erasure_matcher_predecoding and partial_correction_by_predecoding
         ):
             # Number of errors should be the same for colors
-            num_errors = self.H.shape[1]
+            num_errors_colors = [Hs[1].shape[1] for Hs in self.Hs_decomposed.values()]
+            assert (
+                len(set(num_errors_colors)) == 1
+            ), f"Number of errors in second-round DEMs should be the same for all colors. Found {num_errors_colors}."
+            num_errors = num_errors_colors[0]
+
             error_preds = np.empty(
                 (num_logical_classes, len(colors), num_left_samples, num_errors),
                 dtype=bool,
@@ -2069,7 +2076,12 @@ class ColorCode:
 
             # Need to sort error_preds_final since dem_xz and second-round DEM have
             # different orders of errors
-            if full_output:
+            # Not supported for "cult+growing" shape
+            if full_output and return_error_preds:
+                if self.circuit_type == "cult+growing":
+                    raise NotImplementedError(
+                        "Sorting error predictions for 'cult+growing' shape is not implemented."
+                    )
                 for i_c, c in enumerate(["r", "g", "b"]):
                     inds = self.dems_sym_decomposed[c][1].inds_probs_sorted(
                         self.probs_xz
@@ -2103,16 +2115,26 @@ class ColorCode:
             det_partial_corr = get_partial_corr(self.H)
             detector_outcomes_left ^= det_partial_corr
 
-            obs_preds_final, extra_outputs = self.decode(
-                detector_outcomes_left, colors=colors, full_output=True
+            obs_preds_final = self.decode(
+                detector_outcomes_left,
+                colors=colors,
+                full_output=full_output,
+                return_error_preds=return_error_preds,
             )
+            if full_output:
+                obs_preds_final, extra_outputs = obs_preds_final
+            else:
+                extra_outputs = {}
 
             if obs_preds_final.ndim == 1:
                 obs_preds_final = obs_preds_final[:, np.newaxis]
-            error_preds_final = extra_outputs["error_preds"]
-            best_colors = extra_outputs["best_colors"]
-            weights_final = extra_outputs["weights"]
-            logical_gaps = extra_outputs["logical_gaps"]
+
+            if full_output:
+                if return_error_preds:
+                    error_preds_final = extra_outputs["error_preds"]
+                best_colors = extra_outputs["best_colors"]
+                weights_final = extra_outputs["weights"]
+                logical_gaps = extra_outputs["logical_gaps"]
 
         else:
             error_preds_final = np.array([[]], dtype=bool)
@@ -2131,14 +2153,15 @@ class ColorCode:
                 full_best_colors = np.full(detector_outcomes.shape[0], "P")
                 full_weights_final = predecoding_weights.copy()
                 full_logical_gaps = np.full(detector_outcomes.shape[0], -1)
-                full_error_preds_final = predecoding_error_preds.copy()
+                if return_error_preds:
+                    full_error_preds_final = predecoding_error_preds.copy()
 
             # For samples with failed predecoding, use the second-round decoding results
             if detector_outcomes_left.shape[0] > 0:
                 if partial_correction_by_predecoding:
                     # Apply partial correction
                     obs_preds_final ^= obs_partial_corr
-                    if full_output:
+                    if full_output and return_error_preds:
                         error_preds_final ^= predecoding_error_preds_failed.astype(bool)
 
                 full_obs_preds_final[predecoding_failure, :] = obs_preds_final
@@ -2147,26 +2170,30 @@ class ColorCode:
                     full_best_colors[predecoding_failure] = best_colors
                     full_weights_final[predecoding_failure] = weights_final
                     full_logical_gaps[predecoding_failure] = logical_gaps
-                    full_error_preds_final[predecoding_failure, :] = error_preds_final
+                    if return_error_preds:
+                        full_error_preds_final[predecoding_failure, :] = (
+                            error_preds_final
+                        )
 
             obs_preds_final = full_obs_preds_final
             if full_output:
                 best_colors = full_best_colors
                 weights_final = full_weights_final
                 logical_gaps = full_logical_gaps
-                error_preds_final = full_error_preds_final
+                if return_error_preds:
+                    error_preds_final = full_error_preds_final
 
         if obs_preds_final.shape[1] == 1:
             obs_preds_final = obs_preds_final.ravel()
 
         if full_output:
-            if errors_as_qubits:
-                error_preds_final = self.errors_to_qubits(error_preds_final)
             extra_outputs = {
                 "best_colors": best_colors,
                 "weights": weights_final,
-                "error_preds": error_preds_final,
             }
+            if return_error_preds:
+                extra_outputs["error_preds"] = error_preds_final
+
             if len(error_preds_stage1_all) > 1:
                 extra_outputs["logical_gaps"] = logical_gaps
                 extra_outputs["logical_values"] = all_logical_values
@@ -2174,7 +2201,7 @@ class ColorCode:
                     extra_outputs["erasure_matcher_success"] = predecoding_success
                     extra_outputs["predecoding_error_preds"] = predecoding_error_preds
                     extra_outputs["predecoding_obs_preds"] = predecoding_obs_preds
-            if self.shape == "cult+growing":
+            if self.circuit_type == "cult+growing":
                 extra_outputs.update(
                     {
                         "accepted_only_cult": accepted_cult,
@@ -2387,7 +2414,6 @@ class ColorCode:
     def sample_with_errors(
         self,
         shots: int,
-        errors_as_qubits: bool = False,
         seed: Optional[int] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -2397,10 +2423,6 @@ class ColorCode:
         ----------
         shots : int
             Number of samples to generate
-        errors_as_qubits : bool, default False
-            If True, return the errors as the corresponding qubits. Available only when
-            the circuit has only bit-flip errors (i.e., probabilities beside p_bitflip
-            are 0) and rounds = 1.
         seed : int, optional
             Seed value to initialize the random number generator
 
@@ -2423,9 +2445,6 @@ class ColorCode:
         if obs.shape[1] == 1:
             obs = obs.ravel()
 
-        if errors_as_qubits:
-            err = self.errors_to_qubits(err)
-
         return det, obs, err
 
     def errors_to_qubits(
@@ -2437,7 +2456,7 @@ class ColorCode:
         (generated by `self.decode` or `self.simulate`) into the corresponding data
         qubit indices.
 
-        Available only for `shape="tri"` and `shape="rec"` with `rounds=1` under
+        Available only for `tri` and `rec` circuit types with `rounds=1` under
         bit-flip noise (i.e., probabilities besides `p_bitflip` are 0).
 
         Note: Errors and error predictions from `self.sample_with_errors`,
@@ -2461,9 +2480,9 @@ class ColorCode:
             `self.tanner_graph.vs.select(pauli=None)`.
         """
 
-        if self.shape not in {"tri", "rec"}:
+        if self.circuit_type not in {"tri", "rec"}:
             raise NotImplementedError(
-                f'errors_to_qubits is not available for shape="{self.shape}".'
+                f'errors_to_qubits is not available for "{self.circuit_type}" circuit type.'
             )
 
         if self.rounds != 1:
