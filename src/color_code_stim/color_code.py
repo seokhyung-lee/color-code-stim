@@ -1,4 +1,5 @@
 import itertools
+import pickle
 import time
 from math import e
 from typing import (
@@ -348,7 +349,8 @@ class ColorCode:
                     raise ValueError(f"Invalid pauli: {pauli}")
 
                 self.detectors_checks_map.append((qubit, t))
-                self.detector_ids_by_color[color].append(detector_id)
+
+            self.detector_ids_by_color[color].append(detector_id)
 
         if _generate_dem:
             circuit_xz = separate_depolarizing_errors(self.circuit)
@@ -1426,281 +1428,6 @@ class ColorCode:
         except IndexError:
             raise ValueError(f"Detector ID {detector_id} not found.")
 
-    # def _decompose_dem_symbolic(
-    #     self,
-    #     color: COLOR_LABEL,
-    #     remove_non_edge_like_errors: bool = True,
-    #     _decompose_pauli: bool = True,
-    #     _benchmarking: bool = False,
-    # ) -> Tuple[_DemSymbolic, _DemSymbolic]:
-    #     """
-    #     Decompose the detector error model (DEM) of the circuit into the
-    #     restricted and monochromatic DEMs of a given color in symbolic form.
-
-    #     Parameters
-    #     ----------
-    #     color : {'r', 'g', 'b'}
-    #         Color of the decomposed DEMs.
-    #     remove_non_edge_like_errors : bool, default True
-    #         Whether to remove error mechanisms that are not edge-like.
-
-    #     Returns
-    #     -------
-    #     dem1, dem2: _DemSymbolic
-    #         Restricted and monochromatic DEMs of the given color, respectively, in
-    #         symbolic form.
-    #     """
-    #     try:
-    #         return self.dems_sym_decomposed[color]
-    #     except KeyError:
-    #         pass
-
-    #     # Set of detector ids to be reduced
-    #     det_ids_to_reduce = set(self.detector_ids[color])
-
-    #     # stability_exp = self.circuit_type == "rec_stability"
-
-    #     t0 = time.time()
-
-    #     # Original XZ-decomposed DEM
-    #     dem_xz = self.dem_xz
-    #     # probs_xz = self.probs_xz
-    #     num_org_error_sources = dem_xz.num_errors
-    #     num_detectors = dem_xz.num_detectors
-    #     dem_xz_dets = dem_xz[num_org_error_sources:]
-    #     dem_xz_errors = dem_xz[:num_org_error_sources]
-
-    #     if _benchmarking:
-    #         print(time.time() - t0)
-    #         t0 = time.time()
-
-    #     # Decompose into X and Z errors
-    #     # (i.e., ignore correlations between X and Z errors)
-    #     # Already decomposed in circuit_xz, so no need to do it again
-    #     # pauli_decomposed_targets_dict = {}
-    #     # pauli_decomposed_probs_dict = {}
-
-    #     # for i_inst, inst in enumerate(dem_xz_errors):
-    #     #     targets = inst.targets_copy()
-    #     #     new_targets = {"Z": [], "X": [], 'Y': []}
-    #     #     new_target_ids = {"Z": set(), "X": set(), "Y": set()}
-
-    #     #     for target in targets:
-    #     #         if target.is_logical_observable_id():
-    #     #             obsid = int(str(target)[1:])
-    #     #             obs_pauli = self.obs_paulis[obsid]
-    #     #             new_targets[obs_pauli].append(target)
-    #     #             new_target_ids[obs_pauli].add(f"L{obsid}")
-
-    #     #         else:
-    #     #             detid = int(str(target)[1:])
-    #     #             try:
-    #     #                 pauli = self.get_detector_type(detid)[0]
-    #     #             except IndexError:
-    #     #                 pauli = "X" if stability_exp and detid else "Z"
-
-    #     #             new_targets[pauli].append(target)
-    #     #             new_target_ids[pauli].add(detid)
-
-    #     #     if new_targets['Z'] and not new_targets['X']:
-    #     #         pauli = 'Z'
-    #     #     elif new_targets['X'] and not new_targets['Z']:
-    #     #         pauli = 'X'
-    #     #     else:
-    #     #         pauli = 'Y'
-
-    #     #     for pauli in ["Z", "X"]:
-    #     #         new_targets_pauli = new_targets[pauli]
-    #     #         if new_targets_pauli:
-    #     #             new_target_ids_pauli = frozenset(new_target_ids[pauli])
-    #     #             try:
-    #     #                 pauli_decomposed_probs_dict[new_target_ids_pauli].append(i_inst)
-    #     #             except KeyError:
-    #     #                 pauli_decomposed_probs_dict[new_target_ids_pauli] = [i_inst]
-    #     #                 pauli_decomposed_targets_dict[new_target_ids_pauli] = (
-    #     #                     new_targets_pauli
-    #     #                 )
-
-    #     pauli_decomposed_targets_dict = {}
-    #     pauli_decomposed_probs_dict = {}
-    #     for i_em, em in enumerate(dem_xz_errors):
-    #         targets = em.targets_copy()
-    #         target_labels = []
-    #         detids = []
-    #         for target in targets:
-    #             if target.is_relative_detector_id():
-    #                 detid = int(str(target)[1:])
-    #                 target_labels.append(detid)
-    #                 detids.append(detid)
-    #             elif target.is_logical_observable_id():
-    #                 target_labels.append(f"L{str(target)[1:]}")
-    #             else:
-    #                 raise ValueError(f"Unknown target: {target}")
-    #         det_paulis = [self.get_detector_type(detid)[0] for detid in detids]
-    #         if "X" in det_paulis and "Z" in det_paulis and _decompose_pauli:
-    #             target_labels_X = []
-    #             targets_X = []
-    #             target_labels_Z = []
-    #             targets_Z = []
-    #             for i_label, (target, label) in enumerate(zip(targets, target_labels)):
-    #                 if not isinstance(label, str) and det_paulis[i_label] == "X":
-    #                     target_labels_X.append(label)
-    #                     targets_X.append(target)
-    #                 else:
-    #                     target_labels_Z.append(label)
-    #                     targets_Z.append(target)
-    #             target_labels_X = frozenset(target_labels_X)
-    #             pauli_decomposed_targets_dict[target_labels_X] = targets_X
-    #             pauli_decomposed_probs_dict[target_labels_X] = [i_em]
-    #             target_labels_Z = frozenset(target_labels_Z)
-    #             pauli_decomposed_targets_dict[target_labels_Z] = targets_Z
-    #             pauli_decomposed_probs_dict[target_labels_Z] = [i_em]
-    #         else:
-    #             target_labels = frozenset(target_labels)
-    #             pauli_decomposed_targets_dict[target_labels] = targets
-    #             pauli_decomposed_probs_dict[target_labels] = [i_em]
-
-    #     if _benchmarking:
-    #         print(time.time() - t0)
-    #         t0 = time.time()
-
-    #     # Obtain targets list for the two steps
-    #     # dem1_targets_dict = {}
-    #     dem1_probs_dict = {}
-    #     dem1_dets_dict = {}
-    #     dem1_obss_dict = {}
-    #     dem1_virtual_obs_dict = {}
-
-    #     # dem2_targets_list = []
-    #     dem2_probs = []
-    #     dem2_dets = []
-    #     dem2_obss = []
-
-    #     for target_ids in pauli_decomposed_targets_dict:
-    #         targets = pauli_decomposed_targets_dict[target_ids]
-    #         prob = pauli_decomposed_probs_dict[target_ids]
-
-    #         dem1_dets_sng = []
-    #         dem1_obss_sng = []
-    #         dem2_dets_sng = []
-    #         dem2_obss_sng = []
-    #         dem1_det_ids = set()
-
-    #         for target in targets:
-    #             if target.is_logical_observable_id():
-    #                 dem2_obss_sng.append(target)
-    #             else:
-    #                 det_id = int(str(target)[1:])
-    #                 if det_id in det_ids_to_reduce:
-    #                     dem2_dets_sng.append(target)
-    #                 else:
-    #                     dem1_dets_sng.append(target)
-    #                     dem1_det_ids.add(det_id)
-
-    #         if remove_non_edge_like_errors:
-    #             if dem1_dets_sng:
-    #                 if len(dem1_dets_sng) >= 3 or len(dem2_dets_sng) >= 2:
-    #                     continue
-    #             else:
-    #                 if len(dem2_dets_sng) >= 3:
-    #                     continue
-
-    #         if dem1_det_ids:
-    #             dem1_det_ids = frozenset(dem1_det_ids)
-    #             try:
-    #                 dem1_probs_dict[dem1_det_ids].extend(prob)
-    #                 virtual_obs = dem1_virtual_obs_dict[dem1_det_ids]
-    #             except KeyError:
-    #                 virtual_obs = len(dem1_probs_dict)
-    #                 # dem1_obss_sng.append(stim.target_logical_observable_id(virtual_obs))
-    #                 dem1_probs_dict[dem1_det_ids] = prob
-    #                 dem1_dets_dict[dem1_det_ids] = dem1_dets_sng
-    #                 dem1_obss_dict[dem1_det_ids] = dem1_obss_sng
-    #                 dem1_virtual_obs_dict[dem1_det_ids] = virtual_obs
-
-    #             virtual_det_id = num_detectors + virtual_obs
-    #             dem2_dets_sng.append(stim.target_relative_detector_id(virtual_det_id))
-
-    #         # Add a virtual observable to dem2 for distinguishing error sources
-    #         # L0: real observable. L1, L2, ...: virtual observables.
-    #         dem2_dets.append(dem2_dets_sng)
-    #         dem2_obss.append(dem2_obss_sng)
-    #         dem2_probs.append(prob)
-
-    #     if _benchmarking:
-    #         print(time.time() - t0)
-    #         t0 = time.time()
-
-    #     # Convert dem1 information to lists
-    #     dem1_probs = list(dem1_probs_dict.values())
-    #     dem1_dets = [dem1_dets_dict[key] for key in dem1_probs_dict]
-    #     dem1_obss = [dem1_obss_dict[key] for key in dem1_probs_dict]
-
-    #     # Convert to _DemSymbolic objects
-    #     dem1_sym = _DemSymbolic(
-    #         dem1_probs, dem1_dets, dem1_obss, dem_xz_dets, dem_xz.num_errors
-    #     )
-    #     dem2_sym = _DemSymbolic(
-    #         dem2_probs, dem2_dets, dem2_obss, dem_xz_dets, dem_xz.num_errors
-    #     )
-
-    #     # dem1_sym.decompose_complex_error_mechanisms()
-    #     # dem2_sym.decompose_complex_error_mechanisms()
-
-    #     self.dems_sym_decomposed[color] = dem1_sym, dem2_sym
-
-    #     return dem1_sym, dem2_sym
-
-    # def decompose_dem(
-    #     self,
-    #     color: COLOR_LABEL,
-    #     remove_non_edge_like_errors: bool = True,
-    #     _decompose_pauli: bool = True,
-    #     _benchmarking: bool = False,
-    # ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
-    #     """
-    #     Decompose the detector error model (DEM) of the circuit into the
-    #     restricted and monochromatic DEMs of a given color.
-
-    #     Parameters
-    #     ----------
-    #     color : {'r', 'g', 'b'}
-    #         Color of the decomposed DEMs.
-    #     remove_non_edge_like_errors : bool, default True
-    #         Whether to remove error mechanisms that are not edge-like.
-
-    #     Returns
-    #     -------
-    #     dem1, dem2: stim.DetectorErrorModel
-    #         Restricted and monochromatic DEMs of the given color, respectively.
-    #     """
-    #     # assert method_handling_correlated_errors in ['ignore', 'other']
-
-    #     try:
-    #         return self.dems_decomposed[color]
-    #     except KeyError:
-    #         pass
-
-    #     dem1_sym, dem2_sym = self._decompose_dem_symbolic(
-    #         color,
-    #         remove_non_edge_like_errors=remove_non_edge_like_errors,
-    #         _decompose_pauli=_decompose_pauli,
-    #         _benchmarking=_benchmarking,
-    #     )
-
-    #     probs_xz = self.probs_xz
-    #     dem1 = dem1_sym.to_dem(probs_xz)
-    #     dem2 = dem2_sym.to_dem(probs_xz, sort=True)
-    #     self.dems_decomposed[color] = dem1, dem2
-
-    #     H_dem1, _, p_dem1 = dem_to_parity_check(dem1)
-    #     H_dem2, obs_matrix_dem2, p_dem2 = dem_to_parity_check(dem2)
-    #     self.Hs_decomposed[color] = H_dem1, H_dem2
-    #     self.probs_decomposed[color] = p_dem1, p_dem2
-    #     self.obs_matrices_stage2[color] = obs_matrix_dem2
-
-    #     return dem1, dem2
-
     def decode_bp(
         self,
         detector_outcomes: np.ndarray,
@@ -1896,11 +1623,9 @@ class ColorCode:
             cult_interface_det_ids = (
                 self.cult_detector_ids + self.interface_detector_ids
             )
-            cult_accepted = ~np.any(
-                detector_outcomes[:, cult_interface_det_ids], axis=1
-            )
+            cult_success = ~np.any(detector_outcomes[:, cult_interface_det_ids], axis=1)
 
-            detector_outcomes = detector_outcomes[cult_accepted, :]
+            detector_outcomes = detector_outcomes[cult_success, :]
 
         # First round
         num_logical_classes = (
@@ -2155,7 +1880,7 @@ class ColorCode:
                     extra_outputs["predecoding_error_preds"] = predecoding_error_preds
                     extra_outputs["predecoding_obs_preds"] = predecoding_obs_preds
             if self.circuit_type == "cult+growing":
-                extra_outputs["cult_accepted"] = cult_accepted
+                extra_outputs["cult_success"] = cult_success
 
             if check_validity:
                 extra_outputs["validity"] = validity
@@ -2548,6 +2273,11 @@ class ColorCode:
             - 'logical_gaps': Array of logical gaps (only when self.logical_gap is True)
             - etc.
         """
+        if self.circuit_type == "cult+growing":
+            raise NotImplementedError(
+                "Cult+growing circuit type is not supported for this method."
+            )
+
         if colors == "all":
             colors = ["r", "g", "b"]
 
