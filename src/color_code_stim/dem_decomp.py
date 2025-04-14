@@ -310,6 +310,22 @@ class DemDecomp:
         """
         return iter(self._dems)
 
+    def __getitem__(self, idx):
+        """
+        Access the decomposed detector error models by index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the detector error model to access (0 for restricted DEM, 1 for monochromatic DEM).
+
+        Returns
+        -------
+        stim.DetectorErrorModel
+            The requested detector error model.
+        """
+        return self._dems[idx]
+
     # def _precompute_best_org_error_map(self):
     #     """
     #     Precompute the best original error index mapping for `map_errors_to_org_dem()`
