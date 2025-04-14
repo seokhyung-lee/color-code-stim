@@ -64,6 +64,7 @@ class ColorCode:
         Literal["bitflip", "reset", "meas", "cnot", "idle", "cult"], float
     ]
     comparative_decoding: bool
+    detector_pauli_to_use: Optional[PAULI_LABEL]
     cultivation_circuit: Optional[stim.Circuit]
     _benchmarking: bool
     _bp_inputs: Dict[str, Any]
@@ -84,9 +85,10 @@ class ColorCode:
         p_idle: float = 0.0,
         p_circuit: Optional[float] = None,
         p_cult: Optional[float] = None,
-        cultivation_circuit: Optional[stim.Circuit] = None,
         perfect_init_final: bool = False,
         comparative_decoding: bool = False,
+        exclude_non_essential_pauli_detectors: bool = False,
+        cultivation_circuit: Optional[stim.Circuit] = None,
         remove_non_edge_like_errors: bool = True,
         shape: str = None,
         _generate_dem: bool = True,
@@ -159,19 +161,27 @@ class ColorCode:
         p_cult : float, optional
             Physical error probability during cultivation (only used for 'cult+growing'
             circuits). If not given, `p_cult = p_circuit`.
-
-        cultivation_circuit: stim.Circuit, optional
-            If given, it is used as the cultivation circuit for cultivation + growing 
-            circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not 
-            checked internally.
         perfect_init_final : bool, default False
             Whether to use perfect initialization and final measurement.
         comparative_decoding : bool, default False
-            Whether to use the comparative decoding technique. If True, observables are 
-            included as additional detectors and decoding can be done by running the 
-            decoder for each logical class and choosing the lowest-weight one. This also 
-            provides the logical gap information, which quantifies the reliability of 
+            Whether to use the comparative decoding technique. If True, observables are
+            included as additional detectors and decoding can be done by running the
+            decoder for each logical class and choosing the lowest-weight one. This also
+            provides the logical gap information, which quantifies the reliability of
             decoding.
+        exclude_non_essential_pauli_detectors : bool, default False
+            If True and `temp_bdry_type` is not "Y", detectors with the Pauli type
+            different from the temporal boundary type (e.g., X-type detectors for
+            `temp_bdry_type="Z"`) are excluded from the circuit. This does not affect the
+            decoding results since X and Z errors are independently decoded in our method
+            and physical errors with the same pauli type as the temporal boundaries do
+            not affect the logical values. If `temp_bdry_type="Y"` or
+            `circuit_type="cult+growing"`, both types of detectors are required for decoding,
+            so this option is ignored.
+        cultivation_circuit: stim.Circuit, optional
+            If given, it is used as the cultivation circuit for cultivation + growing
+            circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not
+            checked internally.
         remove_non_edge_like_errors: bool, default True
             Whether to remove error mechanisms that are not edge-like when decomposing
             the detector error model.
@@ -265,6 +275,10 @@ class ColorCode:
         if self.circuit_type == "cult+growing":
             self.physical_probs["cult"] = p_cult if p_cult is not None else p_circuit
         self.comparative_decoding = comparative_decoding
+
+        self.exclude_non_essential_pauli_detectors = (
+            exclude_non_essential_pauli_detectors
+        )
 
         if self.comparative_decoding and self.circuit_type == "rec_stability":
             raise NotImplementedError
@@ -746,8 +760,9 @@ class ColorCode:
     def color_val_to_color(color_val: Literal[0, 1, 2]) -> Literal["r", "g", "b"]:
         return {0: "r", 1: "g", 2: "b"}[color_val]
 
-    def get_decomposed_dems(self, color: COLOR_LABEL) \
-        -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
+    def get_decomposed_dems(
+        self, color: COLOR_LABEL
+    ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
         dem1 = self.dems_decomposed[color][0].copy()
         dem2 = self.dems_decomposed[color][1].copy()
         return dem1, dem2
@@ -790,6 +805,10 @@ class ColorCode:
         num_qubits = tanner_graph.vcount()
         all_qids = list(range(num_qubits))
         all_qids_set = set(all_qids)
+
+        exclude_non_essential_pauli_detectors = (
+            self.exclude_non_essential_pauli_detectors
+        )
 
         if circuit_type == "rec_stability":
             red_links = [
@@ -917,6 +936,10 @@ class ColorCode:
 
             ## Z- and X-type detectors
             for pauli in ["Z", "X"]:
+                if exclude_non_essential_pauli_detectors:
+                    if temp_bdry_type in {'X', 'Z'} and pauli != temp_bdry_type:
+                        continue
+
                 anc_qubits_now = anc_Z_qubits if pauli == "Z" else anc_X_qubits
                 init_lookback = -num_anc_qubits if pauli == "Z" else -num_anc_X_qubits
 

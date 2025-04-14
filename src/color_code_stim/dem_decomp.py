@@ -205,6 +205,8 @@ class DemDecomp:
         dem2_dets = []
         dem2_obss = []
 
+        dem_virtual_dets = stim.DetectorErrorModel()
+        dem_virtual_obss = stim.DetectorErrorModel()
         for target_ids in pauli_decomposed_targets_dict:
             targets = pauli_decomposed_targets_dict[target_ids]
             prob = pauli_decomposed_probs_dict[target_ids]
