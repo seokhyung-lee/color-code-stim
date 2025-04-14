@@ -733,6 +733,13 @@ class ColorCode:
     def color_val_to_color(color_val: Literal[0, 1, 2]) -> Literal["r", "g", "b"]:
         return {0: "r", 1: "g", 2: "b"}[color_val]
 
+    def get_decomposed_dems(
+        self, color: COLOR_LABEL
+    ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
+        dem1 = self.dems_decomposed[color][0].copy()
+        dem2 = self.dems_decomposed[color][1].copy()
+        return dem1, dem2
+
     @timeit
     def _generate_circuit(self) -> stim.Circuit:
         qubit_groups = self.qubit_groups
