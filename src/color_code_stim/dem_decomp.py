@@ -22,8 +22,9 @@ class DemDecomp:
     ----------
     color : one of {"r", "g", "b"}
         The color for which the DEM is decomposed.
-    dems : 2-tuple of stim.DetectorErrorModel
+    _dems : 2-tuple of stim.DetectorErrorModel
         The decomposed detector error models for stages 1 and 2.
+        Can be accessed simply by `self[0]` and `self[1]`.
     dems_symbolic : 2-tuple of _DemSymbolic
         Symbolic representations of the decomposed DEMs.
     Hs : 2-tuple of csc_matrix (bool)
@@ -39,7 +40,7 @@ class DemDecomp:
     """
 
     color: COLOR_LABEL
-    dems: Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]
+    _dems: Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]
     dems_symbolic: Tuple[_DemSymbolic, _DemSymbolic]
     Hs: Tuple[csc_matrix, csc_matrix]
     probs: Tuple[np.ndarray, np.ndarray]
@@ -82,7 +83,7 @@ class DemDecomp:
         _, _, org_prob = dem_to_parity_check(org_dem)
         dem1, _ = dem1_sym.to_dem(org_prob)
         dem2, inds_dem2 = dem2_sym.to_dem(org_prob, sort=True)
-        self.dems = dem1, dem2
+        self._dems = dem1, dem2
         self.org_prob = org_prob
 
         error_map_matrix1 = dem1_sym.error_map_matrix
@@ -297,6 +298,17 @@ class DemDecomp:
         error_map_matrix = self.error_map_matrices[stage - 1]
         errors_org = errors @ error_map_matrix
         return errors_org
+
+    def __iter__(self):
+        """
+        Iterate over the decomposed detector error models.
+
+        Returns
+        -------
+        iterator
+            Iterator over the dems tuple (restricted DEM, monochromatic DEM).
+        """
+        return iter(self._dems)
 
     # def _precompute_best_org_error_map(self):
     #     """

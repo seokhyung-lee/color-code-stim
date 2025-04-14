@@ -268,8 +268,7 @@ if __name__ == "__main__":
     for shots in np.arange(round(1e7), round(1e8) + 1, round(1e7)):
         for p in [1e-3, 5e-4]:
             for dcult in [3, 5]:
-                dm_max = 19 if p == 1e-3 else 17
-                for dm in range(dcult + 2, dm_max + 1, 4):
+                for dm in [dcult + 2, dcult + 6, dcult + 10]:
                     run_simulation(shots, p, dcult, dm, n_jobs=19, repeat=100)
 
     print("\nAll simulations finished.")
