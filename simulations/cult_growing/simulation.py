@@ -193,8 +193,11 @@ def run_simulation(shots, p, dcult, dm, n_jobs=-1, repeat=100):
     )  # Use original 'shots' variable for total required
 
     if shots_to_run_now > 0:
+        # Print current timestamp before starting the simulation
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         print(
-            f"\nRunning simulation for (p={p}, dcult={dcult}, dm={dm}) with {shots_to_run_now} shots..."
+            f"\n[{current_time}] Running simulation for (p={p}, dcult={dcult}, dm={dm}) with {shots_to_run_now} shots..."
         )
         # Ensure shots_to_run_now is integer for the simulation function
         num_cult_succ_new, results_df_new = task_parallel(
@@ -266,7 +269,7 @@ if __name__ == "__main__":
         for p in [1e-3, 5e-4]:
             for dcult in [3, 5]:
                 dm_max = 19 if p == 1e-3 else 17
-                for dm in range(dcult + 2, dm_max + 1, 2):
+                for dm in range(dcult + 2, dm_max + 1, 4):
                     run_simulation(shots, p, dcult, dm, n_jobs=19, repeat=100)
 
     print("\nAll simulations finished.")

@@ -5,6 +5,7 @@ notebooks/playground.ipynb
 backup*
 memo.md
 data
+.vscode
 
 ### macOS ###
 # General
