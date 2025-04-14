@@ -101,8 +101,10 @@ class ColorCode:
         ----------
         d : int >= 3
             Code distance. Should be an odd number of 3 or more.
+
         rounds : int >= 1
             Number of syndrome extraction rounds.
+
         circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing',
                 'cult+growing'}, default 'tri'
             Circuit type.
@@ -117,9 +119,11 @@ class ColorCode:
               a larger triangular patch with distance `d2`. Must be `d2 > d`.
             - 'cult+growing': cultivation on a triangular patch with distance `d`,
               followed by a growing operation to distance `d2`. Must be `d2 > d`.
+
         d2 : int >= 3, optional
             Second code distance required for several circuit types.
             If not provided, `d2 = d`.
+
         cnot_schedule : {12-tuple of integers, 'tri_optimal', 'tri_optimal_reversed'},
                         default 'tri_optimal'
             CNOT schedule.
@@ -129,12 +133,14 @@ class ColorCode:
             is the optimal schedule for the triangular color code.
             If this is 'tri_optimal_reversed', it is (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
             which has the X- and Z-part reversed from 'tri_optimal'.
+
         temp_bdry_type : {'X', 'Y', 'Z', 'x', 'y', 'z'}, optional
             Type of the temporal boundaries, i.e., the reset/measurement basis of
             data qubits at the beginning and end of the circuit.
             Not supported for `rec_stability` and `cult+growing` circuits: the types of
             the temporal boundaries are fixed to red for `rec_stability` and `Y` for
             `cult+growing`. For the other circuit types, it is `Z` by default.
+
         p_bitflip : float, default 0
             Bit-flip probability at the start of each round.
         p_reset : float, default 0
@@ -153,12 +159,19 @@ class ColorCode:
         p_cult : float, optional
             Physical error probability during cultivation (only used for 'cult+growing'
             circuits). If not given, `p_cult = p_circuit`.
+
         cultivation_circuit: stim.Circuit, optional
-            If given, it is used as the cultivation circuit for cultivation + growing circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not checked internally.
+            If given, it is used as the cultivation circuit for cultivation + growing 
+            circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not 
+            checked internally.
         perfect_init_final : bool, default False
             Whether to use perfect initialization and final measurement.
         comparative_decoding : bool, default False
-            Whether to use the comparative decoding technique. If True, observables are included as additional detectors and decoding can be done by running the decoder for each logical class and choosing the lowest-weight one. This also provides the logical gap information, which quantifies the reliability of decoding.
+            Whether to use the comparative decoding technique. If True, observables are 
+            included as additional detectors and decoding can be done by running the 
+            decoder for each logical class and choosing the lowest-weight one. This also 
+            provides the logical gap information, which quantifies the reliability of 
+            decoding.
         remove_non_edge_like_errors: bool, default True
             Whether to remove error mechanisms that are not edge-like when decomposing
             the detector error model.
