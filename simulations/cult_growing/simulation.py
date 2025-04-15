@@ -1,13 +1,11 @@
-import argparse
 import os
 import warnings
 from datetime import datetime
-from typing import Tuple
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, cpu_count, delayed
-from tqdm import tqdm
 
 from src.color_code_stim import ColorCode
 
@@ -84,16 +82,63 @@ def count_fails_above_threshold(
 
 
 def task(shots_batch, dcult, dm, p):
+    """
+    Performs a batch of simulation shots using a pre-loaded ColorCode instance.
+
+    Loads a pickled ColorCode instance corresponding to dcult, dm, p,
+    runs the simulation for shots_batch, decodes, and calculates failures
+    based on logical gaps.
+
+    Parameters
+    ----------
+    shots_batch : int
+        Number of shots to simulate in this batch.
+    dcult : int
+        Distance parameter for the cultivation part.
+    dm : int
+        Distance parameter for the measurement part (must be > dcult).
+    p : float
+        Physical error rate.
+
+    Returns
+    -------
+    int
+        Number of successful cultivation rounds (num_cult_succ).
+    pd.DataFrame
+        DataFrame indexed by 'c' (threshold), with columns 'num_fails'
+        and 'num_accepted'.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the required pickled ColorCode file is not found.
+    Exception
+        If there is an error loading the ColorCode instance.
+    """
     assert dm > dcult
-    cc = ColorCode(
-        circuit_type="cult+growing",
-        d=dcult,
-        d2=dm,
-        rounds=dm,
-        p_circuit=p,
-        comparative_decoding=True,
-        perfect_init_final=True,
-    )
+
+    # Define path for the pickled ColorCode instance
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    pickle_dir = os.path.join(current_dir, "pickled_color_codes")
+    filename = f"cc_p{p}_dcult{dcult}_dm{dm}.pkl"
+    filepath = os.path.join(pickle_dir, filename)
+
+    # Load the pre-generated ColorCode instance
+    # Assuming ColorCode.load is a class method that loads the instance
+    try:
+        # Assuming ColorCode has a class method 'load'
+        cc = ColorCode.load(filepath)
+    except FileNotFoundError:
+        print(f"Error: Pre-generated ColorCode file not found at {filepath}")
+        # Ensure the pre-generation step has been run for these parameters
+        raise FileNotFoundError(
+            f"Pickled ColorCode not found: {filepath}. Run the pre-generation step."
+        )
+    except Exception as e:
+        print(f"Error loading ColorCode from {filepath}: {e}")
+        raise e
+
+    # Run sampling and decoding using the loaded instance
     det, obs = cc.sample(shots_batch)
     obs_preds, extra_outputs = cc.decode(det, full_output=True)
     cult_success = extra_outputs["cult_success"]
@@ -264,11 +309,81 @@ def run_simulation(shots, p, dcult, dm, n_jobs=-1, repeat=100):
         )
 
 
+def pregenerate_color_codes(parameters: List[Tuple[float, int, int]]) -> None:
+    """
+    Generates and saves ColorCode instances if they don't already exist.
+
+    Parameters
+    ----------
+    parameters : list of tuple
+        A list where each tuple contains (p, dcult, dm) for a ColorCode instance.
+
+    Returns
+    -------
+    None
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    pickle_dir = os.path.join(current_dir, "pickled_color_codes")
+    os.makedirs(pickle_dir, exist_ok=True)
+    print("\nPregenerating ColorCode instances...")
+
+    for p, dcult, dm in parameters:
+        filename = f"cc_p{p}_dcult{dcult}_dm{dm}.pkl"
+        filepath = os.path.join(pickle_dir, filename)
+
+        if not os.path.exists(filepath):
+            print(f"Generating ColorCode for p={p}, dcult={dcult}, dm={dm}...")
+            try:
+                cc = ColorCode(
+                    circuit_type="cult+growing",
+                    d=dcult,
+                    d2=dm,
+                    rounds=dm,
+                    p_circuit=p,
+                    comparative_decoding=True,
+                    perfect_init_final=True,
+                )
+                # Assuming ColorCode instance has a 'save' method
+                cc.save(filepath)
+                print(f"Saved: {filepath}")
+            except Exception as e:
+                print(
+                    f"Error generating/saving ColorCode for p={p}, dcult={dcult}, dm={dm}: {e}"
+                )
+        else:
+            # Optionally print skipping message, can be verbose for many params
+            # print(f"Skipping, already exists: {filepath}")
+            pass  # Silently skip if file exists
+    print("Pregeneration complete.")
+
+
 if __name__ == "__main__":
-    for shots in np.arange(round(1e7), round(1e8) + 1, round(1e7)):
-        for p in [1e-3, 5e-4]:
-            for dcult in [3, 5]:
-                for dm in [dcult + 2, dcult + 6, dcult + 10]:
-                    run_simulation(shots, p, dcult, dm, n_jobs=19, repeat=100)
+    # Define the parameter combinations first
+    simulation_params = []
+    all_ps = [1e-3, 5e-4]
+    all_dcults = [5]
+    all_dms_funcs = [lambda d: d + 2, lambda d: d + 6, lambda d: d + 10]
+
+    for p_val in all_ps:
+        for dcult_val in all_dcults:
+            for dm_func in all_dms_funcs:
+                dm_val = dm_func(dcult_val)
+                if dm_val > dcult_val:  # Ensure dm > dcult
+                    simulation_params.append((p_val, dcult_val, dm_val))
+
+    # Pre-generate ColorCode instances before starting simulations
+    pregenerate_color_codes(simulation_params)
+
+    # Run the simulations using the pre-generated instances
+    print("\nStarting simulations...")
+    # Define shots range
+    start_shots = round(1e7)
+    end_shots = round(1e9)
+    step_shots = round(1e7)
+
+    for shots in np.arange(start_shots, end_shots + 1, step_shots):
+        print(f"\n--- Running simulations for {shots=:,} ---")
+        for p, dcult, dm in simulation_params:
+            run_simulation(shots, p, dcult, dm, n_jobs=19, repeat=100)
 
     print("\nAll simulations finished.")
