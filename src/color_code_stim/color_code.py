@@ -46,7 +46,7 @@ class ColorCode:
     rounds: int
     circuit_type: str
     temp_bdry_type: Literal["X", "Y", "Z", "r", "g", "b"]
-    cnot_schedule: Union[str, Tuple[int, ...]]
+    cnot_schedule: List[int]
     num_obs: int
     qubit_groups: Dict[str, ig.VertexSeq]
     obs_paulis: List[PAULI_LABEL]
@@ -64,8 +64,9 @@ class ColorCode:
         Literal["bitflip", "reset", "meas", "cnot", "idle", "cult"], float
     ]
     comparative_decoding: bool
-    detector_pauli_to_use: Optional[PAULI_LABEL]
+    exclude_non_essential_pauli_detectors: bool
     cultivation_circuit: Optional[stim.Circuit]
+    remove_non_edge_like_errors: bool
     _benchmarking: bool
     _bp_inputs: Dict[str, Any]
 
@@ -76,7 +77,7 @@ class ColorCode:
         rounds: int,
         circuit_type: str = "tri",
         d2: int = None,
-        cnot_schedule: Union[str, Sequence[int]] = "tri_optimal",
+        cnot_schedule: Union[str, List[int]] = "tri_optimal",
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         p_bitflip: float = 0.0,
         p_reset: float = 0.0,
@@ -126,10 +127,10 @@ class ColorCode:
             Second code distance required for several circuit types.
             If not provided, `d2 = d`.
 
-        cnot_schedule : {12-tuple of integers, 'tri_optimal', 'tri_optimal_reversed'},
+        cnot_schedule : {'tri_optimal', 'tri_optimal_reversed'} or list of 12 integers,
                         default 'tri_optimal'
             CNOT schedule.
-            If this is a 12-tuple of integers, it indicates (a, b, ... l) specifying
+            If this is a list of 12 integers, it indicates (a, b, ... l) specifying
             the CNOT schedule.
             If this is 'tri_optimal', it is (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2), which
             is the optimal schedule for the triangular color code.
@@ -191,12 +192,13 @@ class ColorCode:
         """
         if isinstance(cnot_schedule, str):
             if cnot_schedule in ["tri_optimal", "LLB"]:
-                cnot_schedule = (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2)
+                cnot_schedule = [2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2]
             elif cnot_schedule == "tri_optimal_reversed":
-                cnot_schedule = (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1)
+                cnot_schedule = [3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1]
             else:
-                raise ValueError
+                raise ValueError(f"Invalid cnot schedule: {cnot_schedule}")
         else:
+            cnot_schedule = list(cnot_schedule)
             assert len(cnot_schedule) == 12
 
         assert d > 1 and rounds >= 1
@@ -280,6 +282,8 @@ class ColorCode:
             exclude_non_essential_pauli_detectors
         )
 
+        self.remove_non_edge_like_errors = remove_non_edge_like_errors
+
         if self.comparative_decoding and self.circuit_type == "rec_stability":
             raise NotImplementedError
 
@@ -306,10 +310,6 @@ class ColorCode:
 
         self._benchmarking = _benchmarking
 
-        # Mapping between detector ids and ancillary qubits
-        # self.detectors_checks_map[detector_id] = (anc_qubit, time_coord)
-        self.detectors_checks_map = []
-
         # Various qubit groups predefined for efficiency
         self.qubit_groups = {}
 
@@ -319,6 +319,13 @@ class ColorCode:
 
         self.circuit = self._generate_circuit()
 
+        (
+            detector_ids_by_color,
+            cult_detector_ids,
+            interface_detector_ids,
+            detectors_checks_map,
+        ) = self._generate_det_id_info()
+
         # Detector coordinates: (x, y, t, pauli, color) OR (x, y, t, pauli, color, flag)
         # pauli = 0, 1, 2 -> X, Y, Z
         # color = 0, 1, 2 -> r, g, b
@@ -327,107 +334,16 @@ class ColorCode:
         # (only when comparatitive_decoding is True)
         # flag = -2, -1: cultivation / interface between cultivation and growing
         # (only for `cult+growing` circuits)
-        detector_coords_dict = self.circuit.get_detector_coordinates()
-        self.detector_ids_by_color = {
-            "r": [],
-            "g": [],
-            "b": [],
-        }
-        self.cult_detector_ids = []
-        self.interface_detector_ids = []
+        self.detector_ids_by_color = detector_ids_by_color
+        self.cult_detector_ids = cult_detector_ids
+        self.interface_detector_ids = interface_detector_ids
 
-        for detector_id in range(self.circuit.num_detectors):
-            coords = detector_coords_dict[detector_id]
-            if self.circuit_type == "cult+growing" and len(coords) == 6:
-                # The detector is in the cultivation circuit or the interface region
-                flag = coords[-1]
-                if flag == -1:
-                    self.interface_detector_ids.append(detector_id)
-                elif flag == -2:
-                    self.cult_detector_ids.append(detector_id)
-                    continue
-
-            x = round(coords[0])
-            y = round(coords[1])
-            t = round(coords[2])
-            pauli = round(coords[3])
-            color = self.color_val_to_color(round(coords[4]))
-            is_obs = len(coords) == 6 and round(coords[-1]) >= 0
-
-            if not is_obs:
-                # Ordinary X/Z detectors
-                if pauli == 0:
-                    name = f"{x}-{y}-X"
-                    qubit = tanner_graph.vs.find(name=name)
-                    color = qubit["color"]
-                elif pauli == 2:
-                    name = f"{x}-{y}-Z"
-                    qubit = tanner_graph.vs.find(name=name)
-                    color = qubit["color"]
-                elif pauli == 1:
-                    name_X = f"{x}-{y}-X"
-                    name_Z = f"{x}-{y}-Z"
-                    qubit_X = tanner_graph.vs.find(name=name_X)
-                    qubit_Z = tanner_graph.vs.find(name=name_Z)
-                    qubit = (qubit_X, qubit_Z)
-                    color = qubit_X["color"]
-                else:
-                    print(coords)
-                    raise ValueError(f"Invalid pauli: {pauli}")
-
-                self.detectors_checks_map.append((qubit, t))
-
-            self.detector_ids_by_color[color].append(detector_id)
+        # Mapping between detector ids and ancillary qubits
+        # self.detectors_checks_map[detector_id] = (anc_qubit, time_coord)
+        self.detectors_checks_map = detectors_checks_map
 
         if _generate_dem:
-            circuit_xz = separate_depolarizing_errors(self.circuit)
-            dem_xz = circuit_xz.detector_error_model(flatten_loops=True)
-            if self.circuit_type == "cult+growing":
-                # Remove error mechanisms that involve detectors that will be post-selected
-                dem_xz_new = stim.DetectorErrorModel()
-                all_detids_in_dem_xz = set()
-                for inst in dem_xz:
-                    keep = True
-                    if inst.type == "error":
-                        detids = []
-                        for target in inst.targets_copy():
-                            if target.is_relative_detector_id():
-                                detid = int(str(target)[1:])
-                                detids.append(detid)
-                                if (
-                                    detid
-                                    in self.cult_detector_ids
-                                    # + self.interface_detector_ids
-                                ):
-                                    keep = False
-                                    continue
-                        if keep:
-                            all_detids_in_dem_xz.update(detids)
-                    if keep:
-                        dem_xz_new.append(inst)
-                dem_xz = dem_xz_new
-                probs_dem_xz = [
-                    em.args_copy()[0] for em in dem_xz.flattened() if em.type == "error"
-                ]
-
-                # After removing, some detectors during growth may not be involved
-                # in any error mechanisms. Although such detectors have very low probability
-                # to be flipped, we add them in the DEM with an arbitrary very small
-                # probability to prevent PyMatching errors.
-                detids_to_add = set(range(self.circuit.num_detectors))
-                detids_to_add -= all_detids_in_dem_xz
-                detids_to_add -= set(self.cult_detector_ids)
-                detids_to_add = list(detids_to_add)
-                p_very_small = max(probs_dem_xz) ** 2
-                for detid in detids_to_add:
-                    dem_xz.append(
-                        "error",
-                        p_very_small,
-                        [stim.DemTarget.relative_detector_id(detid)],
-                    )
-
-            self.dem_xz = dem_xz
-            self.H, self.obs_matrix, self.probs_xz = dem_to_parity_check(dem_xz)
+            self.dem_xz, self.H, self.obs_matrix, self.probs_xz = self._generate_dem()
         else:
             self.dem_xz = None
             self.H = None
@@ -443,7 +359,7 @@ class ColorCode:
                 dem_decomp = DemDecomp(
                     org_dem=self.dem_xz,
                     color=c,
-                    remove_non_edge_like_errors=remove_non_edge_like_errors,
+                    remove_non_edge_like_errors=self.remove_non_edge_like_errors,
                 )
                 self.dems_decomposed[c] = dem_decomp
 
@@ -937,7 +853,7 @@ class ColorCode:
             ## Z- and X-type detectors
             for pauli in ["Z", "X"]:
                 if exclude_non_essential_pauli_detectors:
-                    if temp_bdry_type in {'X', 'Z'} and pauli != temp_bdry_type:
+                    if temp_bdry_type in {"X", "Z"} and pauli != temp_bdry_type:
                         continue
 
                 anc_qubits_now = anc_Z_qubits if pauli == "Z" else anc_X_qubits
@@ -1338,6 +1254,126 @@ class ColorCode:
                     circuit.append("DETECTOR", target, coords)
 
         return circuit
+
+    def _generate_det_id_info(
+        self,
+    ) -> Tuple[
+        Dict[COLOR_LABEL, List[int]], List[int], List[int], List[Tuple[ig.Vertex, int]]
+    ]:
+        tanner_graph = self.tanner_graph
+
+        detector_coords_dict = self.circuit.get_detector_coordinates()
+        detector_ids_by_color = {
+            "r": [],
+            "g": [],
+            "b": [],
+        }
+        cult_detector_ids = []
+        interface_detector_ids = []
+        detectors_checks_map = []
+
+        for detector_id in range(self.circuit.num_detectors):
+            coords = detector_coords_dict[detector_id]
+            if self.circuit_type == "cult+growing" and len(coords) == 6:
+                # The detector is in the cultivation circuit or the interface region
+                flag = coords[-1]
+                if flag == -1:
+                    interface_detector_ids.append(detector_id)
+                elif flag == -2:
+                    cult_detector_ids.append(detector_id)
+                    continue
+
+            x = round(coords[0])
+            y = round(coords[1])
+            t = round(coords[2])
+            pauli = round(coords[3])
+            color = self.color_val_to_color(round(coords[4]))
+            is_obs = len(coords) == 6 and round(coords[-1]) >= 0
+
+            if not is_obs:
+                # Ordinary X/Z detectors
+                if pauli == 0:
+                    name = f"{x}-{y}-X"
+                    qubit = tanner_graph.vs.find(name=name)
+                    color = qubit["color"]
+                elif pauli == 2:
+                    name = f"{x}-{y}-Z"
+                    qubit = tanner_graph.vs.find(name=name)
+                    color = qubit["color"]
+                elif pauli == 1:
+                    name_X = f"{x}-{y}-X"
+                    name_Z = f"{x}-{y}-Z"
+                    qubit_X = tanner_graph.vs.find(name=name_X)
+                    qubit_Z = tanner_graph.vs.find(name=name_Z)
+                    qubit = (qubit_X, qubit_Z)
+                    color = qubit_X["color"]
+                else:
+                    print(coords)
+                    raise ValueError(f"Invalid pauli: {pauli}")
+
+                detectors_checks_map.append((qubit, t))
+
+            detector_ids_by_color[color].append(detector_id)
+
+        return (
+            detector_ids_by_color,
+            cult_detector_ids,
+            interface_detector_ids,
+            detectors_checks_map,
+        )
+
+    def _generate_dem(
+        self,
+    ) -> Tuple[stim.DetectorErrorModel, csc_matrix, csc_matrix, np.ndarray]:
+        circuit_xz = separate_depolarizing_errors(self.circuit)
+        dem_xz = circuit_xz.detector_error_model(flatten_loops=True)
+        if self.circuit_type == "cult+growing":
+            # Remove error mechanisms that involve detectors that will be post-selected
+            dem_xz_new = stim.DetectorErrorModel()
+            all_detids_in_dem_xz = set()
+            for inst in dem_xz:
+                keep = True
+                if inst.type == "error":
+                    detids = []
+                    for target in inst.targets_copy():
+                        if target.is_relative_detector_id():
+                            detid = int(str(target)[1:])
+                            detids.append(detid)
+                            if (
+                                detid
+                                in self.cult_detector_ids
+                                # + self.interface_detector_ids
+                            ):
+                                keep = False
+                                continue
+                    if keep:
+                        all_detids_in_dem_xz.update(detids)
+                if keep:
+                    dem_xz_new.append(inst)
+            dem_xz = dem_xz_new
+            probs_dem_xz = [
+                em.args_copy()[0] for em in dem_xz.flattened() if em.type == "error"
+            ]
+
+            # After removing, some detectors during growth may not be involved
+            # in any error mechanisms. Although such detectors have very low probability
+            # to be flipped, we add them in the DEM with an arbitrary very small
+            # probability to prevent PyMatching errors.
+            detids_to_add = set(range(self.circuit.num_detectors))
+            detids_to_add -= all_detids_in_dem_xz
+            detids_to_add -= set(self.cult_detector_ids)
+            detids_to_add = list(detids_to_add)
+            p_very_small = max(probs_dem_xz) ** 2
+            for detid in detids_to_add:
+                dem_xz.append(
+                    "error",
+                    p_very_small,
+                    [stim.DemTarget.relative_detector_id(detid)],
+                )
+
+        H, obs_matrix, probs_xz = dem_to_parity_check(dem_xz)
+
+        return dem_xz, H, obs_matrix, probs_xz
 
     def draw_lattice(
         self,
@@ -1810,7 +1846,7 @@ class ColorCode:
             if colors == ["r", "g", "b"]:
                 best_colors = best_color_inds
             else:
-                best_colors = np.array([self.color_to_val[c] for c in colors])[
+                best_colors = np.array([self.color_to_color_val(c) for c in colors])[
                     best_color_inds
                 ]
 
@@ -2474,3 +2510,122 @@ class ColorCode:
         for res in self.simulate_target_confint_gen(*args, **kwargs):
             pass
         return res
+
+    # ----- Save/Load Methods -----
+
+    def save(self, path: str):
+        """
+        Save the ColorCode object to a file using pickle.
+
+        Excludes non-picklable attributes: `detectors_checks_map`, `qubit_groups`,
+        `dems_decomposed`, and `_bp_inputs`. These will be reconstructed upon loading.
+
+        Parameters
+        ----------
+        path : str
+            The file path where the object should be saved.
+        """
+        data = self.__dict__.copy()
+        # Attributes to exclude from pickling
+        excluded_keys = [
+            "detectors_checks_map",
+            "qubit_groups",
+            "dems_decomposed",
+            "_bp_inputs",
+        ]
+        for key in excluded_keys:
+            if key in data:
+                del data[key]
+
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+
+    @classmethod
+    def load(cls, path: str) -> "ColorCode":
+        """
+        Load a ColorCode object from a file saved by the `save` method.
+
+        Reconstructs non-picklable attributes excluded during saving.
+
+        Parameters
+        ----------
+        path : str
+            The file path from which to load the object.
+
+        Returns
+        -------
+        ColorCode
+            The loaded ColorCode object.
+        """
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+
+        # Create a new instance without calling __init__
+        instance = cls.__new__(cls)
+        instance.__dict__.update(data)
+
+        # Reconstruct non-picklable attributes
+        try:
+            instance._reconstruct_qubit_groups()
+            instance._reconstruct_detectors_checks_map()
+            instance._reconstruct_dems_decomposed()
+            instance._bp_inputs = {}  # Initialize empty cache
+        except Exception as e:
+            print(f"Error during reconstruction: {e}")
+            # Depending on desired behavior, you might re-raise or handle differently
+            raise
+
+        return instance
+
+    def _reconstruct_qubit_groups(self):
+        """Helper method to reconstruct the qubit_groups attribute after loading."""
+        tanner_graph = self.tanner_graph
+        data_qubits = tanner_graph.vs.select(pauli=None)
+        anc_qubits = tanner_graph.vs.select(pauli_ne=None)
+        anc_Z_qubits = anc_qubits.select(pauli="Z")
+        anc_X_qubits = anc_qubits.select(pauli="X")
+        anc_red_qubits = anc_qubits.select(color="r")
+        anc_green_qubits = anc_qubits.select(color="g")
+        anc_blue_qubits = anc_qubits.select(color="b")
+
+        self.qubit_groups = {
+            "data": data_qubits,
+            "anc": anc_qubits,
+            "anc_Z": anc_Z_qubits,
+            "anc_X": anc_X_qubits,
+            "anc_red": anc_red_qubits,
+            "anc_green": anc_green_qubits,
+            "anc_blue": anc_blue_qubits,
+        }
+
+    def _reconstruct_detectors_checks_map(self):
+        """Helper method to reconstruct the detectors_checks_map attribute after loading."""
+        (
+            detector_ids_by_color,
+            cult_detector_ids,
+            interface_detector_ids,
+            detectors_checks_map,
+        ) = self._generate_det_id_info()
+        # These attributes might have been loaded, update them if necessary
+        # or ensure consistency if they were *not* saved.
+        self.detector_ids_by_color = detector_ids_by_color
+        self.cult_detector_ids = cult_detector_ids
+        self.interface_detector_ids = interface_detector_ids
+        self.detectors_checks_map = detectors_checks_map
+
+    def _reconstruct_dems_decomposed(self):
+        """Helper method to reconstruct the dems_decomposed attribute after loading."""
+        self.dems_decomposed = {}
+        for c in ["r", "g", "b"]:
+            try:
+                # Assuming DemDecomp class is available in the scope
+                dem_decomp = DemDecomp(
+                    org_dem=self.dem_xz,
+                    color=c,
+                    remove_non_edge_like_errors=self.remove_non_edge_like_errors,
+                )
+                self.dems_decomposed[c] = dem_decomp
+            except Exception as e:
+                print(f"Error reconstructing DemDecomp for color {c}: {e}")
+                # Handle error as appropriate, maybe skip this color
+                pass
