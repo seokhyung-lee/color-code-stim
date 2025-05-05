@@ -117,7 +117,7 @@ class ColorCode:
               `d` and `d2`.
             - 'rec_stability': stability experiment of a rectangle-like patch with
               single-type boundaries. `d` and `d2` indicate the size of the patch,
-              although they are no longer code distances.
+              rather than code distances.
             - 'growing': growing operation from a triangular patch with distance `d` to
               a larger triangular patch with distance `d2`. Must be `d2 > d`.
             - 'cult+growing': cultivation on a triangular patch with distance `d`,
