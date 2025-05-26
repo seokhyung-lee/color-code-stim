@@ -273,10 +273,27 @@ def dem_to_parity_check(
 #     return obs_matrix
 
 
-def save_circuit_diagram(circuit: stim.Circuit, path: str, type: str = "timeline-svg"):
+def save_circuit_diagram(
+    circuit: stim.Circuit, path: str, type: str = "timeline-svg"
+) -> None:
     """
-    Save a circuit diagram to a file.
+    Save a textual diagram of ``circuit`` to ``path``.
+
+    Parameters
+    ----------
+    circuit : stim.Circuit
+        Circuit whose diagram will be saved.
+    path : str
+        File path for the output diagram.
+    type : str, default 'timeline-svg'
+        Format used by ``stim.Circuit.diagram``.
+
+    Returns
+    -------
+    None
+        This function writes to disk and does not return a value.
     """
+
     print(circuit.diagram(type=type), file=open(path, "w"))
 
 

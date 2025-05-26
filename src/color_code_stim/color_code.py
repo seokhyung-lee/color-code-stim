@@ -381,7 +381,9 @@ class ColorCode:
         return self.obs_paulis[observable_id]
 
     @timeit
-    def _create_tanner_graph(self):
+    def _create_tanner_graph(self) -> None:
+        """Construct the Tanner graph for the chosen circuit type."""
+
         circuit_type = self.circuit_type
         tanner_graph = self.tanner_graph
 
