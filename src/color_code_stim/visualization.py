@@ -207,10 +207,25 @@ def draw_lattice(
     color_map = {"r": "red", "g": "green", "b": "blue"}
 
     # Function to lighten a color based on alpha value
-    def lighten_color(color, alpha_factor):
-        # Convert color to RGB
+    def lighten_color(color: str, alpha_factor: float) -> Tuple[float, float, float]:
+        """
+        Return a lighter version of ``color`` controlled by ``alpha_factor``.
+
+        Parameters
+        ----------
+        color : str
+            Matplotlib-compatible color specification.
+        alpha_factor : float
+            Value in ``[0, 1]`` controlling the blend with white. ``0`` yields the
+            lightest color.
+
+        Returns
+        -------
+        r, g, b : 3-tuple of float
+            Lightened RGB color values.
+        """
+
         r, g, b = to_rgb(color)
-        # Mix with white based on alpha
         r = r + (1 - r) * (1 - alpha_factor)
         g = g + (1 - g) * (1 - alpha_factor)
         b = b + (1 - b) * (1 - alpha_factor)

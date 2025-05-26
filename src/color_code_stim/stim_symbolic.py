@@ -43,8 +43,15 @@ class _ErrorMechanismSymbolic:
         self.dets = set(dets)
         self.obss = set(obss)
 
-    def __repr__(self):
-        return f"_ErrorMechanismSymbolic(dets={{{', '.join(str(det) for det in self.dets)}}}, obss={{{', '.join(str(obs) for obs in self.obss)}}}, prob_vars={self.prob_vars}, prob_muls={self.prob_muls})"
+    def __repr__(self) -> str:
+        """Return a concise string representation of this error mechanism."""
+
+        return (
+            "_ErrorMechanismSymbolic("
+            f"dets={{{ {', '.join(str(det) for det in self.dets)} }}}, "
+            f"obss={{{ {', '.join(str(obs) for obs in self.obss)} }}}, "
+            f"prob_vars={self.prob_vars}, prob_muls={self.prob_muls})"
+        )
 
 
 class _DemSymbolic:
@@ -71,16 +78,19 @@ class _DemSymbolic:
 
         self.update_error_map_matrix()
 
-    def __iter__(self):
-        """Iterate through the error mechanisms."""
+    def __iter__(self) -> "Iterator[_ErrorMechanismSymbolic]":
+        """Return an iterator over the error mechanisms."""
+
         return iter(self._ems)
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the number of error mechanisms."""
+
         return len(self._ems)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: int | slice) -> _ErrorMechanismSymbolic | List[_ErrorMechanismSymbolic]:
         """Access error mechanisms by index or slice."""
+
         return self._ems[key]
 
     @classmethod
@@ -101,12 +111,12 @@ class _DemSymbolic:
         new_dem.update_error_map_matrix()
         return new_dem
 
-    def update_error_map_matrix(self):
+    def update_error_map_matrix(self) -> None:
         """
-        Updates the error_map_matrix based on the current self.ems list.
+        Recalculate ``error_map_matrix`` from the current error mechanisms.
 
-        Determines the number of variables by finding the maximum index used
-        in any em.prob_vars array. Updates self.error_map_matrix in place.
+        The matrix maps indices of decomposed errors to indices of the original
+        error mechanisms.
         """
         num_errors = len(self._ems)
         if num_errors == 0:

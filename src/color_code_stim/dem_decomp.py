@@ -113,8 +113,13 @@ class DemDecomp:
 
         # self._best_org_error_map = self._precompute_best_org_error_map()
 
-    def __repr__(self):
-        return f"<DemDecomp object with color='{self.color}', Hs[0].shape={self.Hs[0].shape}, Hs[1].shape={self.Hs[1].shape}>"
+    def __repr__(self) -> str:
+        """Return the string representation of this object."""
+
+        return (
+            f"<DemDecomp object with color='{self.color}', "
+            f"Hs[0].shape={self.Hs[0].shape}, Hs[1].shape={self.Hs[1].shape}>"
+        )
 
     def decompose_org_dem(
         self,
@@ -301,31 +306,33 @@ class DemDecomp:
         errors_org = errors @ error_map_matrix
         return errors_org
 
-    def __iter__(self):
+    def __iter__(self) -> "Iterator[stim.DetectorErrorModel]":
         """
-        Iterate over the decomposed detector error models.
+        Return an iterator over the decomposed detector error models.
 
         Returns
         -------
-        iterator
-            Iterator over the dems tuple (restricted DEM, monochromatic DEM).
+        Iterator of stim.DetectorErrorModel
+            Yields the restricted and monochromatic detector error models.
         """
+
         return iter(self._dems)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> stim.DetectorErrorModel:
         """
-        Access the decomposed detector error models by index.
+        Access one of the decomposed detector error models by index.
 
         Parameters
         ----------
         idx : int
-            Index of the detector error model to access (0 for restricted DEM, 1 for monochromatic DEM).
+            ``0`` for the restricted model or ``1`` for the monochromatic model.
 
         Returns
         -------
         stim.DetectorErrorModel
-            The requested detector error model.
+            The selected detector error model.
         """
+
         return self._dems[idx]
 
     # def _precompute_best_org_error_map(self):
