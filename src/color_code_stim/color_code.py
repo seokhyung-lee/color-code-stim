@@ -102,7 +102,7 @@ class ColorCode:
         Parameters
         ----------
         d : int >= 3
-            Code distance. Should be an odd number of 3 or more.
+            Code distance.
 
         rounds : int >= 1
             Number of syndrome extraction rounds.
@@ -1162,7 +1162,7 @@ class ColorCode:
                 circuit.append("DETECTOR", target, coords)
 
             target = [stim.target_rec(ind) for ind in obs_Z_lookback_inds]
-            circuit.append("OBSERVABLE_INCLUDE", target, 0)
+            circuit.append("OBSERVABLE_INCLUDE", [target], 0)
             if self.comparative_decoding:
                 raise NotImplementedError
 
