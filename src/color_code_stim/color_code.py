@@ -19,7 +19,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pymatching
 import stim
-from ldpc import BpDecoder
 from scipy.sparse import csc_matrix, csr_matrix
 from statsmodels.stats.proportion import proportion_confint
 
@@ -1538,6 +1537,14 @@ class ColorCode:
         converge : bool
             Whether the belief propagation algorithm converged within max_iter iterations.
         """
+        try:
+            from ldpc import BpDecoder
+        except ImportError:
+            raise ImportError(
+                "The 'ldpc' package is required for belief propagation decoding. "
+                "Please install it using: pip install ldpc"
+            )
+
         bp_inputs = self._bp_inputs
         if bp_inputs:
             H = bp_inputs["H"]

@@ -4,5 +4,4 @@ stim>=1.14.0
 pymatching>=2.1.0
 python-igraph>=0.11.3
 statsmodels>=0.14.1
-ldpc>=2.3.6
 cairosvg >= 2.8.0
