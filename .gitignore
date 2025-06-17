@@ -8,6 +8,7 @@ data
 .vscode
 pickled_color_codes
 gap_data.pkl
+**/gap_data.pkl
 
 ### macOS ###
 # General
