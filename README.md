@@ -1,5 +1,7 @@
 # color-code-stim
-Python package for simulating &amp; decoding 2D color code circuits.
+Python package for simulating &amp; decoding 2D color code circuits, used in the paper ["Color code decoder with improved scaling for correcting circuit-level noise"](https://quantum-journal.org/papers/q-2025-01-27-1609/).
+
+**Note**: _The previous version of this package (used in [our paper](https://quantum-journal.org/papers/q-2025-01-27-1609/)) implemented the bit‑flip noise model incorrectly, leading to an overestimation of the logical failure rate. In that version, each qubit was subjected to bit‑flip noise twice (both before and after the syndrome extraction). As a result, the estimated bit‑flip noise threshold has been improved from 8.2% (presented in our paper) to 8.6%, and the logical failure rate has been roughly halved. The circuit‑level results, which form the main focus of the paper, remain unaffected._
 
 **Note**: _See also [ConcatMatching](https://github.com/seokhyung-lee/ConcatMatching) if you want to input your check matrix directly to the decoder instead of using pre-defined color code circuits._
 
