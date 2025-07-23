@@ -3,15 +3,16 @@ from typing import Dict, FrozenSet, List, Literal, Optional, Sequence, Tuple, Un
 
 import stim
 
-from .utils import get_project_folder
+from pathlib import Path
 
 
 def _load_cultivation_circuit(d: int, p: float) -> stim.Circuit:
     """
     Loads a cultivation circuit from a file.
     """
+    current_folder = Path(__file__).parent
     cultivation_circuit = stim.Circuit.from_file(
-        f"{get_project_folder()}/assets/cultivation_circuits/d{d}_p{p}.stim"
+        f"{current_folder}/assets/cultivation_circuits/d{d}_p{p}.stim"
     )
     return cultivation_circuit
 

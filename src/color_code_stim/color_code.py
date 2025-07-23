@@ -1,4 +1,5 @@
 import itertools
+from pathlib import Path
 import pickle
 import time
 from typing import (
@@ -287,19 +288,10 @@ class ColorCode:
 
         if self.circuit_type == "cult+growing":
             if cultivation_circuit is None:
-                project_folder = get_project_folder()
-                try:
-                    path = (
-                        project_folder
-                        / "assets"
-                        / "cultivation_circuits"
-                        / f"d{d}_p{p_circuit}.stim"
-                    )
-                except FileNotFoundError:
-                    raise NotImplementedError(
-                        f"Not supported for d = {d}, p = {p_circuit}"
-                    )
-                cultivation_circuit = stim.Circuit.from_file(path)
+                cultivation_circuit = _load_cultivation_circuit(
+                    d=d, p=self.physical_probs["cult"]
+                )
+
         else:
             cultivation_circuit = None
         self.cultivation_circuit = cultivation_circuit
@@ -765,11 +757,8 @@ class ColorCode:
             for qubit in tanner_graph.vs:
                 coords = self.get_qubit_coords(qubit)
                 qubit_coords[qubit.index] = coords
-            cult_circuit = _load_cultivation_circuit(
-                self.d, self.physical_probs["cult"]
-            )
             cult_circuit, interface_detectors_info = _reformat_cultivation_circuit(
-                cult_circuit,
+                self.cultivation_circuit,
                 self.d,
                 qubit_coords,
                 x_offset=x_offset_init_patch,
