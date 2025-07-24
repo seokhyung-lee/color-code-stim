@@ -1,7 +1,4 @@
-import itertools
-from pathlib import Path
 import pickle
-import time
 from typing import (
     Any,
     Dict,
@@ -10,24 +7,20 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
-    Type,
-    TypeVar,
     Union,
 )
 
 import igraph as ig
 import matplotlib.pyplot as plt
 import numpy as np
-import pymatching
 import stim
-from scipy.sparse import csc_matrix, csr_matrix
-from statsmodels.stats.proportion import proportion_confint
+from scipy.sparse import csc_matrix
 
 from .circuit_builder import CircuitBuilder
 from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_val_to_color
 from .decoders import ConcatMatchingDecoder, BPDecoder, BeliefConcatMatchingDecoder
 from .graph_builder import TannerGraphBuilder
-from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
+from .cultivation import _load_cultivation_circuit
 from .dem_utils.dem_decomp import DemDecomp
 from .dem_utils.dem_manager import DemManager
 from .simulation import Simulator
@@ -35,7 +28,6 @@ from .stim_utils import (
     dem_to_parity_check,
     remove_obs_from_dem,
 )
-from .utils import get_pfail, get_project_folder, timeit
 from .visualization import draw_lattice, draw_tanner_graph
 
 
