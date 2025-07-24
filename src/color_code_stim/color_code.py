@@ -28,10 +28,10 @@ from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_to_color_val
 from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
 from .dem_decomp import DemDecomp
+from .dem_manager import DEMManager
 from .stim_utils import (
     dem_to_parity_check,
     remove_obs_from_dem,
-    separate_depolarizing_errors,
 )
 from .utils import _get_final_predictions, get_pfail, get_project_folder, timeit
 from .visualization import draw_lattice, draw_tanner_graph
@@ -68,6 +68,7 @@ class ColorCode:
     remove_non_edge_like_errors: bool
     _benchmarking: bool
     _bp_inputs: Dict[str, Any]
+    _dem_manager: Optional[DEMManager]
 
     def __init__(
         self,
@@ -322,49 +323,76 @@ class ColorCode:
         )
         self.circuit = builder.build()
 
-        (
-            detector_ids_by_color,
-            cult_detector_ids,
-            interface_detector_ids,
-            detectors_checks_map,
-        ) = self._generate_det_id_info()
-
-        # Detector coordinates: (x, y, t, pauli, color) OR (x, y, t, pauli, color, flag)
-        # pauli = 0, 1, 2 -> X, Y, Z
-        # color = 0, 1, 2 -> r, g, b
-        # flag does not exist for ordinary detectors.
-        # flag >= 0: detector corresponding to an observable (id=flag)
-        # (only when comparatitive_decoding is True)
-        # flag = -2, -1: cultivation / interface between cultivation and growing
-        # (only for `cult+growing` circuits)
-        self.detector_ids_by_color = detector_ids_by_color
-        self.cult_detector_ids = cult_detector_ids
-        self.interface_detector_ids = interface_detector_ids
-
-        # Mapping between detector ids and ancillary qubits
-        # self.detectors_checks_map[detector_id] = (anc_qubit, time_coord)
-        self.detectors_checks_map = detectors_checks_map
-
-        if _generate_dem:
-            self.dem_xz, self.H, self.obs_matrix, self.probs_xz = self._generate_dem()
-        else:
-            self.dem_xz = None
-            self.H = None
-            self.obs_matrix = None
-            self.probs_xz = None
-
+        # Initialize DEM manager (lazy loading)
+        self._dem_manager = None
+        self._generate_dem = _generate_dem
+        self._decompose_dem = _decompose_dem
+        
         self._bp_inputs = {}
 
-        # Decompose detector error models
-        self.dems_decomposed = {}
-        if _generate_dem and _decompose_dem:
-            for c in ["r", "g", "b"]:
-                dem_decomp = DemDecomp(
-                    org_dem=self.dem_xz,
-                    color=c,
+    @property
+    def dem_manager(self) -> DEMManager:
+        """Lazy loading property for DEM Manager."""
+        if self._dem_manager is None:
+            if self._generate_dem:
+                self._dem_manager = DEMManager(
+                    circuit=self.circuit,
+                    tanner_graph=self.tanner_graph,
+                    circuit_type=self.circuit_type,
+                    comparative_decoding=self.comparative_decoding,
                     remove_non_edge_like_errors=self.remove_non_edge_like_errors,
                 )
-                self.dems_decomposed[c] = dem_decomp
+            else:
+                # Create a minimal DEM manager for backward compatibility
+                # when _generate_dem is False
+                raise NotImplementedError("DEM generation is disabled")
+        return self._dem_manager
+    
+    # Property delegation for backward compatibility
+    @property
+    def dem_xz(self) -> stim.DetectorErrorModel:
+        """Delegate to DEM manager."""
+        return self.dem_manager.dem_xz
+    
+    @property
+    def H(self) -> csc_matrix:
+        """Delegate to DEM manager."""
+        return self.dem_manager.H
+    
+    @property
+    def obs_matrix(self) -> csc_matrix:
+        """Delegate to DEM manager."""
+        return self.dem_manager.obs_matrix
+    
+    @property
+    def probs_xz(self) -> np.ndarray:
+        """Delegate to DEM manager."""
+        return self.dem_manager.probs_xz
+    
+    @property
+    def detector_ids_by_color(self) -> Dict[COLOR_LABEL, List[int]]:
+        """Delegate to DEM manager."""
+        return self.dem_manager.detector_ids_by_color
+    
+    @property
+    def cult_detector_ids(self) -> List[int]:
+        """Delegate to DEM manager."""
+        return self.dem_manager.cult_detector_ids
+    
+    @property
+    def interface_detector_ids(self) -> List[int]:
+        """Delegate to DEM manager."""
+        return self.dem_manager.interface_detector_ids
+    
+    @property
+    def detectors_checks_map(self) -> List[Tuple[ig.Vertex, int]]:
+        """Delegate to DEM manager."""
+        return self.dem_manager.detectors_checks_map
+    
+    @property
+    def dems_decomposed(self) -> Dict[COLOR_LABEL, DemDecomp]:
+        """Delegate to DEM manager."""
+        return self.dem_manager.dems_decomposed
 
     def get_detector_type(self, detector_id: int) -> Tuple[PAULI_LABEL, COLOR_LABEL]:
         coords = self.circuit.get_detector_coordinates(only=[detector_id])[detector_id]
@@ -388,130 +416,9 @@ class ColorCode:
     def get_decomposed_dems(
         self, color: COLOR_LABEL
     ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
-        dem1 = self.dems_decomposed[color][0].copy()
-        dem2 = self.dems_decomposed[color][1].copy()
-        return dem1, dem2
+        """Delegate to DEM manager."""
+        return self.dem_manager.get_decomposed_dems(color)
 
-
-    def _generate_det_id_info(
-        self,
-    ) -> Tuple[
-        Dict[COLOR_LABEL, List[int]], List[int], List[int], List[Tuple[ig.Vertex, int]]
-    ]:
-        tanner_graph = self.tanner_graph
-
-        detector_coords_dict = self.circuit.get_detector_coordinates()
-        detector_ids_by_color = {
-            "r": [],
-            "g": [],
-            "b": [],
-        }
-        cult_detector_ids = []
-        interface_detector_ids = []
-        detectors_checks_map = []
-
-        for detector_id in range(self.circuit.num_detectors):
-            coords = detector_coords_dict[detector_id]
-            if self.circuit_type == "cult+growing" and len(coords) == 6:
-                # The detector is in the cultivation circuit or the interface region
-                flag = coords[-1]
-                if flag == -1:
-                    interface_detector_ids.append(detector_id)
-                elif flag == -2:
-                    cult_detector_ids.append(detector_id)
-                    continue
-
-            x = round(coords[0])
-            y = round(coords[1])
-            t = round(coords[2])
-            pauli = round(coords[3])
-            color = color_val_to_color(round(coords[4]))
-            is_obs = len(coords) == 6 and round(coords[-1]) >= 0
-
-            if not is_obs:
-                # Ordinary X/Z detectors
-                if pauli == 0:
-                    name = f"{x}-{y}-X"
-                    qubit = tanner_graph.vs.find(name=name)
-                    color = qubit["color"]
-                elif pauli == 2:
-                    name = f"{x}-{y}-Z"
-                    qubit = tanner_graph.vs.find(name=name)
-                    color = qubit["color"]
-                elif pauli == 1:
-                    name_X = f"{x}-{y}-X"
-                    name_Z = f"{x}-{y}-Z"
-                    qubit_X = tanner_graph.vs.find(name=name_X)
-                    qubit_Z = tanner_graph.vs.find(name=name_Z)
-                    qubit = (qubit_X, qubit_Z)
-                    color = qubit_X["color"]
-                else:
-                    print(coords)
-                    raise ValueError(f"Invalid pauli: {pauli}")
-
-                detectors_checks_map.append((qubit, t))
-
-            detector_ids_by_color[color].append(detector_id)
-
-        return (
-            detector_ids_by_color,
-            cult_detector_ids,
-            interface_detector_ids,
-            detectors_checks_map,
-        )
-
-    def _generate_dem(
-        self,
-    ) -> Tuple[stim.DetectorErrorModel, csc_matrix, csc_matrix, np.ndarray]:
-        circuit_xz = separate_depolarizing_errors(self.circuit)
-        dem_xz = circuit_xz.detector_error_model(flatten_loops=True)
-        if self.circuit_type == "cult+growing":
-            # Remove error mechanisms that involve detectors that will be post-selected
-            dem_xz_new = stim.DetectorErrorModel()
-            all_detids_in_dem_xz = set()
-            for inst in dem_xz:
-                keep = True
-                if inst.type == "error":
-                    detids = []
-                    for target in inst.targets_copy():
-                        if target.is_relative_detector_id():
-                            detid = int(str(target)[1:])
-                            detids.append(detid)
-                            if (
-                                detid
-                                in self.cult_detector_ids
-                                # + self.interface_detector_ids
-                            ):
-                                keep = False
-                                continue
-                    if keep:
-                        all_detids_in_dem_xz.update(detids)
-                if keep:
-                    dem_xz_new.append(inst)
-            dem_xz = dem_xz_new
-            probs_dem_xz = [
-                em.args_copy()[0] for em in dem_xz.flattened() if em.type == "error"
-            ]
-
-            # After removing, some detectors during growth may not be involved
-            # in any error mechanisms. Although such detectors have very low probability
-            # to be flipped, we add them in the DEM with an arbitrary very small
-            # probability to prevent PyMatching errors.
-            detids_to_add = set(range(self.circuit.num_detectors))
-            detids_to_add -= all_detids_in_dem_xz
-            detids_to_add -= set(self.cult_detector_ids)
-            detids_to_add = list(detids_to_add)
-            p_very_small = max(probs_dem_xz) ** 2
-            for detid in detids_to_add:
-                dem_xz.append(
-                    "error",
-                    p_very_small,
-                    [stim.DemTarget.relative_detector_id(detid)],
-                )
-
-        H, obs_matrix, probs_xz = dem_to_parity_check(dem_xz)
-
-        return dem_xz, H, obs_matrix, probs_xz
 
     def draw_lattice(
         self,

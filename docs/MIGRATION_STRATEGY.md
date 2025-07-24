@@ -127,7 +127,7 @@ This hybrid approach balances simplicity with organization:
 - No changes to public API
 - Circuit generation isolated from other concerns
 
-### Phase 2: Tanner Graph Extraction (Week 3-4)
+### Phase 2: Tanner Graph Extraction (Done!)
 
 #### Objectives
 - Separate graph construction from circuit logic
@@ -187,7 +187,7 @@ This hybrid approach balances simplicity with organization:
 - Visualization functionality preserved
 - All graph-related tests pass
 
-### Phase 3: DEM Manager Extraction (Week 5)
+### Phase 3: DEM Manager Extraction (Done!)
 
 #### Objectives
 - Extract detector error model generation and management

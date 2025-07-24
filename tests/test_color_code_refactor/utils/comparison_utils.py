@@ -281,6 +281,251 @@ def compare_qubit_groups(legacy_groups: Dict[str, Any], refactored_groups: Dict[
     return result
 
 
+def compare_dem_generation(legacy: LegacyColorCode, refactored: RefactoredColorCode) -> ComparisonResult:
+    """
+    Compare DEM generation between legacy and refactored implementations.
+    
+    Parameters
+    ----------
+    legacy, refactored : ColorCode instances
+        Instances to compare
+        
+    Returns
+    -------
+    ComparisonResult
+        Detailed comparison result
+    """
+    result = ComparisonResult("DEM Generation")
+    
+    try:
+        # Compare detector error models
+        legacy_dem = legacy.dem_xz
+        refactored_dem = refactored.dem_xz
+        
+        if str(legacy_dem) != str(refactored_dem):
+            result.add_difference("Detector error models differ")
+            result.add_detail(f"Legacy DEM length: {len(str(legacy_dem))}")
+            result.add_detail(f"Refactored DEM length: {len(str(refactored_dem))}")
+        else:
+            result.add_detail("Detector error models identical")
+            result.add_detail(f"DEM length: {len(str(legacy_dem))}")
+        
+        # Compare number of detectors and observables
+        if legacy_dem.num_detectors != refactored_dem.num_detectors:
+            result.add_difference(f"Number of detectors: {legacy_dem.num_detectors} vs {refactored_dem.num_detectors}")
+        else:
+            result.add_detail(f"Number of detectors: {legacy_dem.num_detectors}")
+            
+        if legacy_dem.num_observables != refactored_dem.num_observables:
+            result.add_difference(f"Number of observables: {legacy_dem.num_observables} vs {refactored_dem.num_observables}")
+        else:
+            result.add_detail(f"Number of observables: {legacy_dem.num_observables}")
+            
+        # Compare number of errors
+        legacy_errors = legacy_dem.num_errors
+        refactored_errors = refactored_dem.num_errors
+        if legacy_errors != refactored_errors:
+            result.add_difference(f"Number of errors: {legacy_errors} vs {refactored_errors}")
+        else:
+            result.add_detail(f"Number of errors: {legacy_errors}")
+            
+    except Exception as e:
+        result.add_difference(f"Exception during DEM comparison: {e}")
+    
+    if result.passed:
+        result.set_summary("DEM generation is equivalent")
+    else:
+        result.set_summary("DEM generation has differences")
+    
+    return result
+
+
+def compare_detector_info(legacy: LegacyColorCode, refactored: RefactoredColorCode) -> ComparisonResult:
+    """
+    Compare detector information mappings between legacy and refactored implementations.
+    
+    Parameters
+    ----------
+    legacy, refactored : ColorCode instances
+        Instances to compare
+        
+    Returns
+    -------
+    ComparisonResult
+        Detailed comparison result
+    """
+    result = ComparisonResult("Detector Information")
+    
+    try:
+        # Compare detector IDs by color
+        for color in ["r", "g", "b"]:
+            legacy_ids = set(legacy.detector_ids_by_color[color])
+            refactored_ids = set(refactored.detector_ids_by_color[color])
+            
+            if legacy_ids != refactored_ids:
+                result.add_difference(f"Color '{color}' detector IDs: {len(legacy_ids)} vs {len(refactored_ids)} detectors")
+                result.add_detail(f"Legacy {color}: {sorted(legacy_ids)}")
+                result.add_detail(f"Refactored {color}: {sorted(refactored_ids)}")
+            else:
+                result.add_detail(f"Color '{color}': {len(legacy_ids)} detectors")
+        
+        # Compare cultivation detector IDs
+        legacy_cult = set(legacy.cult_detector_ids)
+        refactored_cult = set(refactored.cult_detector_ids)
+        
+        if legacy_cult != refactored_cult:
+            result.add_difference(f"Cultivation detector IDs: {len(legacy_cult)} vs {len(refactored_cult)}")
+        else:
+            result.add_detail(f"Cultivation detectors: {len(legacy_cult)}")
+        
+        # Compare interface detector IDs
+        legacy_interface = set(legacy.interface_detector_ids)
+        refactored_interface = set(refactored.interface_detector_ids)
+        
+        if legacy_interface != refactored_interface:
+            result.add_difference(f"Interface detector IDs: {len(legacy_interface)} vs {len(refactored_interface)}")
+        else:
+            result.add_detail(f"Interface detectors: {len(legacy_interface)}")
+        
+        # Compare detectors_checks_map length
+        if len(legacy.detectors_checks_map) != len(refactored.detectors_checks_map):
+            result.add_difference(f"Detectors checks map length: {len(legacy.detectors_checks_map)} vs {len(refactored.detectors_checks_map)}")
+        else:
+            result.add_detail(f"Detectors checks map: {len(legacy.detectors_checks_map)} entries")
+            
+    except Exception as e:
+        result.add_difference(f"Exception during detector info comparison: {e}")
+    
+    if result.passed:
+        result.set_summary("Detector information is equivalent")
+    else:
+        result.set_summary("Detector information has differences")
+    
+    return result
+
+
+def compare_matrices(legacy: LegacyColorCode, refactored: RefactoredColorCode) -> ComparisonResult:
+    """
+    Compare parity check and observable matrices.
+    
+    Parameters
+    ----------
+    legacy, refactored : ColorCode instances
+        Instances to compare
+        
+    Returns
+    -------
+    ComparisonResult
+        Detailed comparison result
+    """
+    result = ComparisonResult("Matrices")
+    
+    try:
+        # Compare parity check matrices
+        legacy_H = legacy.H
+        refactored_H = refactored.H
+        
+        if legacy_H.shape != refactored_H.shape:
+            result.add_difference(f"Parity check matrix shape: {legacy_H.shape} vs {refactored_H.shape}")
+        else:
+            result.add_detail(f"Parity check matrix shape: {legacy_H.shape}")
+            
+            # Compare matrix content (convert to dense for comparison)
+            if not np.allclose(legacy_H.toarray(), refactored_H.toarray()):
+                result.add_difference("Parity check matrix content differs")
+            else:
+                result.add_detail("Parity check matrix content identical")
+        
+        # Compare observable matrices
+        legacy_obs = legacy.obs_matrix
+        refactored_obs = refactored.obs_matrix
+        
+        if legacy_obs.shape != refactored_obs.shape:
+            result.add_difference(f"Observable matrix shape: {legacy_obs.shape} vs {refactored_obs.shape}")
+        else:
+            result.add_detail(f"Observable matrix shape: {legacy_obs.shape}")
+            
+            if not np.allclose(legacy_obs.toarray(), refactored_obs.toarray()):
+                result.add_difference("Observable matrix content differs")
+            else:
+                result.add_detail("Observable matrix content identical")
+        
+        # Compare error probabilities
+        if not np.allclose(legacy.probs_xz, refactored.probs_xz):
+            result.add_difference("Error probabilities differ")
+            result.add_detail(f"Legacy probs shape: {legacy.probs_xz.shape}")
+            result.add_detail(f"Refactored probs shape: {refactored.probs_xz.shape}")
+        else:
+            result.add_detail(f"Error probabilities identical: {legacy.probs_xz.shape}")
+            
+    except Exception as e:
+        result.add_difference(f"Exception during matrix comparison: {e}")
+    
+    if result.passed:
+        result.set_summary("Matrices are equivalent")
+    else:
+        result.set_summary("Matrices have differences")
+    
+    return result
+
+
+def compare_dem_decomposition(legacy: LegacyColorCode, refactored: RefactoredColorCode) -> ComparisonResult:
+    """
+    Compare DEM decomposition by color.
+    
+    Parameters
+    ----------
+    legacy, refactored : ColorCode instances
+        Instances to compare
+        
+    Returns
+    -------
+    ComparisonResult
+        Detailed comparison result
+    """
+    result = ComparisonResult("DEM Decomposition")
+    
+    try:
+        for color in ["r", "g", "b"]:
+            # Compare decomposed DEM structures
+            legacy_dem_decomp = legacy.dems_decomposed[color]
+            refactored_dem_decomp = refactored.dems_decomposed[color]
+            
+            # Compare stage 1 and 2 DEMs
+            for stage in [0, 1]:
+                legacy_dem = str(legacy_dem_decomp[stage])
+                refactored_dem = str(refactored_dem_decomp[stage])
+                
+                if legacy_dem != refactored_dem:
+                    result.add_difference(f"Color '{color}' stage {stage+1} DEM differs")
+                    result.add_detail(f"Legacy length: {len(legacy_dem)}")
+                    result.add_detail(f"Refactored length: {len(refactored_dem)}")
+                else:
+                    result.add_detail(f"Color '{color}' stage {stage+1} DEM identical ({len(legacy_dem)} chars)")
+            
+            # Compare parity check matrices for each stage
+            for stage in [0, 1]:
+                legacy_H = legacy_dem_decomp.Hs[stage]
+                refactored_H = refactored_dem_decomp.Hs[stage]
+                
+                if legacy_H.shape != refactored_H.shape:
+                    result.add_difference(f"Color '{color}' stage {stage+1} H matrix shape: {legacy_H.shape} vs {refactored_H.shape}")
+                elif not np.allclose(legacy_H.toarray(), refactored_H.toarray()):
+                    result.add_difference(f"Color '{color}' stage {stage+1} H matrix content differs")
+                else:
+                    result.add_detail(f"Color '{color}' stage {stage+1} H matrix: {legacy_H.shape}")
+                    
+    except Exception as e:
+        result.add_difference(f"Exception during DEM decomposition comparison: {e}")
+    
+    if result.passed:
+        result.set_summary("DEM decomposition is equivalent")
+    else:
+        result.set_summary("DEM decomposition has differences")
+    
+    return result
+
+
 def compare_full_instances(legacy: LegacyColorCode, refactored: RefactoredColorCode) -> List[ComparisonResult]:
     """
     Perform comprehensive comparison of two ColorCode instances.
@@ -322,6 +567,42 @@ def compare_full_instances(legacy: LegacyColorCode, refactored: RefactoredColorC
     except Exception as e:
         error_result = ComparisonResult("Circuit Generation")
         error_result.add_difference(f"Exception during circuit comparison: {e}")
+        results.append(error_result)
+    
+    # Compare DEM generation
+    try:
+        dem_result = compare_dem_generation(legacy, refactored)
+        results.append(dem_result)
+    except Exception as e:
+        error_result = ComparisonResult("DEM Generation")
+        error_result.add_difference(f"Exception during DEM comparison: {e}")
+        results.append(error_result)
+    
+    # Compare detector information
+    try:
+        detector_result = compare_detector_info(legacy, refactored)
+        results.append(detector_result)
+    except Exception as e:
+        error_result = ComparisonResult("Detector Information")
+        error_result.add_difference(f"Exception during detector info comparison: {e}")
+        results.append(error_result)
+    
+    # Compare matrices
+    try:
+        matrix_result = compare_matrices(legacy, refactored)
+        results.append(matrix_result)
+    except Exception as e:
+        error_result = ComparisonResult("Matrices")
+        error_result.add_difference(f"Exception during matrix comparison: {e}")
+        results.append(error_result)
+    
+    # Compare DEM decomposition
+    try:
+        decomp_result = compare_dem_decomposition(legacy, refactored)
+        results.append(decomp_result)
+    except Exception as e:
+        error_result = ComparisonResult("DEM Decomposition")
+        error_result.add_difference(f"Exception during DEM decomposition comparison: {e}")
         results.append(error_result)
     
     return results

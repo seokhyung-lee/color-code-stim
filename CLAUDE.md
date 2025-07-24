@@ -42,6 +42,7 @@ pytest tests/test_color_code_refactor/integration_tests/ -v # Integration and pe
 # Run quick validation tests
 pytest tests/test_color_code_refactor/phase1_tests/test_circuit_equivalence.py::TestPhase1CircuitEquivalence::test_quick_circuit_equivalence -v
 pytest tests/test_color_code_refactor/phase2_tests/test_tanner_graph_equivalence.py::TestPhase2TannerGraphEquivalence::test_quick_graph_equivalence -v
+pytest tests/test_color_code_refactor/phase3_tests/test_dem_equivalence.py::TestPhase3DEMEquivalence::test_quick_dem_equivalence -v
 ```
 
 ## Code Architecture
