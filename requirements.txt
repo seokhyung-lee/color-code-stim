@@ -5,3 +5,5 @@ pymatching>=2.1.0
 python-igraph>=0.11.3
 statsmodels>=0.14.1
 cairosvg >= 2.8.0
+jupyter
+pytest

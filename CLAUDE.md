@@ -28,11 +28,17 @@ isort src/
 
 ### Running Tests
 ```bash
-# Note: No test directory exists yet, but when added:
+# Run all tests
 pytest tests/
 
 # Run specific test
 pytest tests/test_specific.py::test_function_name
+
+# Run circuit equivalence tests using tox
+tox -e main    # Test original implementation
+tox -e dev     # Test refactored implementation  
+tox -e compare # Compare results between implementations
+tox -e full    # Complete verification pipeline
 ```
 
 ## Code Architecture
@@ -40,23 +46,34 @@ pytest tests/test_specific.py::test_function_name
 ### Core Components
 
 1. **ColorCode Class** (`src/color_code_stim/color_code.py`): Main interface for creating color code circuits and running simulations. Handles:
-   - Circuit generation for different topologies (triangular, rectangular, stability experiments, growing operations)
+   - High-level circuit configuration and parameter management
    - Detector error model (DEM) generation and decomposition
    - Integration with the concatenated MWPM decoder
    - Monte Carlo simulation framework
 
-2. **Circuit Types**: The package supports multiple circuit configurations:
+2. **CircuitBuilder Class** (`src/color_code_stim/circuit_builder.py`): Modular circuit generation engine that handles:
+   - Circuit generation for different topologies (triangular, rectangular, stability experiments, growing operations)
+   - CNOT scheduling and syndrome extraction circuits
+   - Detector and observable placement
+   - Integration with cultivation circuits
+
+3. **Configuration Module** (`src/color_code_stim/config.py`): Centralized configuration and constants:
+   - CNOT schedules for different circuit topologies
+   - Type definitions and color/pauli mappings
+   - Helper functions for coordinate and color conversions
+
+4. **Circuit Types**: The package supports multiple circuit configurations:
    - `"tri"`: Memory experiments on triangular patches
    - `"rec"`: Memory experiments on rectangular patches  
    - `"rec_stability"`: Stability experiments on rectangle-like patches
    - `"growing"`: Growing operations from one distance to another
    - `"cult+growing"`: Cultivation followed by growing operations
 
-3. **DEM Decomposition** (`src/color_code_stim/dem_decomp.py`): Handles decomposition of detector error models by color for the concatenated decoder.
+5. **DEM Decomposition** (`src/color_code_stim/dem_decomp.py`): Handles decomposition of detector error models by color for the concatenated decoder.
 
-4. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
+6. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
 
-5. **Utilities**: 
+7. **Utilities**: 
    - `stim_utils.py`: Helper functions for working with Stim circuits and error models
    - `visualization.py`: Plotting functions for lattices and Tanner graphs
    - `utils.py`: General utility functions for file I/O and performance calculations
