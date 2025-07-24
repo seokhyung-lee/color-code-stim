@@ -90,6 +90,7 @@ pytest tests/test_color_code_refactor/phase4_tests/test_decoder_equivalence.py::
    - `base.py`: BaseDecoder interface for all decoder implementations
    - `concat_matching_decoder.py`: ConcatMatchingDecoder - sophisticated two-stage MWPM decoding with color-based decomposition
    - `bp_decoder.py`: BPDecoder - belief propagation decoding with optional ldpc dependency
+   - `belief_concat_matching_decoder.py`: BeliefConcatMatchingDecoder - combines BP pre-decoding with concatenated matching for improved performance
 
 7. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
 
@@ -134,7 +135,7 @@ The project uses a comprehensive equivalence testing approach to validate the on
     - **Phase 1 Tests**: Circuit generation equivalence (CircuitBuilder vs legacy) ✅ Complete
     - **Phase 2 Tests**: Tanner graph construction equivalence (TannerGraphBuilder vs legacy) ✅ Complete
     - **Phase 3 Tests**: DEM management equivalence (DEMManager vs legacy) ✅ Complete
-    - **Phase 4 Tests**: Decoder equivalence (ConcatMatchingDecoder vs legacy) 🚧 In Progress
+    - **Phase 4 Tests**: Decoder equivalence (ConcatMatchingDecoder, BeliefConcatMatchingDecoder vs legacy) ✅ Complete
     - **Integration Tests**: End-to-end equivalence and performance regression testing
     - **Test Utilities**: Comprehensive comparison functions and test parameter generation
 

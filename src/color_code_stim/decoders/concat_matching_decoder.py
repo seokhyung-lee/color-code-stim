@@ -90,6 +90,7 @@ class ConcatMatchingDecoder(BaseDecoder):
         full_output: bool = False,
         check_validity: bool = False,
         verbose: bool = False,
+        custom_dem_data: Optional[Dict[str, Tuple[Tuple, Tuple]]] = None,
         **kwargs,
     ) -> Union[np.ndarray, Tuple[np.ndarray, dict]]:
         """
@@ -117,6 +118,10 @@ class ConcatMatchingDecoder(BaseDecoder):
             Whether to check the validity of predicted error patterns.
         verbose : bool, default False
             Whether to print additional information during decoding.
+        custom_dem_data : dict, optional
+            Custom DEM matrices and probabilities for BP predecoding.
+            Format: {color: ((H1, p1), (H2, p2))} where H1,H2 are parity check
+            matrices and p1,p2 are probability arrays for stages 1 and 2.
         **kwargs
             Additional parameters (for compatibility).
 
@@ -189,11 +194,11 @@ class ConcatMatchingDecoder(BaseDecoder):
                             i
                         ]
                     error_preds_stage1_all[i][c] = self._decode_stage1(
-                        detector_outcomes_copy, c
+                        detector_outcomes_copy, c, custom_dem_data
                     )
                 else:
                     error_preds_stage1_all[i][c] = self._decode_stage1(
-                        detector_outcomes, c
+                        detector_outcomes, c, custom_dem_data
                     )
 
         # Erasure matcher predecoding
@@ -266,11 +271,11 @@ class ConcatMatchingDecoder(BaseDecoder):
                                 all_logical_values[i]
                             )
                         error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_copy, error_preds_stage1_left[i][c], c
+                            detector_outcomes_copy, error_preds_stage1_left[i][c], c, custom_dem_data
                         )
                     else:
                         error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_left, error_preds_stage1_left[i][c], c
+                            detector_outcomes_left, error_preds_stage1_left[i][c], c, custom_dem_data
                         )
 
                     # Map errors back to original DEM ordering
@@ -435,7 +440,12 @@ class ConcatMatchingDecoder(BaseDecoder):
         else:
             return obs_preds_final
 
-    def _decode_stage1(self, detector_outcomes: np.ndarray, color: str) -> np.ndarray:
+    def _decode_stage1(
+        self, 
+        detector_outcomes: np.ndarray, 
+        color: str, 
+        custom_dem_data: Optional[Dict[str, Tuple[Tuple, Tuple]]] = None
+    ) -> np.ndarray:
         """
         Perform stage 1 decoding for a specific color.
 
@@ -454,10 +464,15 @@ class ConcatMatchingDecoder(BaseDecoder):
             Stage 1 error predictions
         """
         det_outcomes_dem1 = detector_outcomes.copy()
-        H, p = (
-            self.dem_manager.dems_decomposed[color].Hs[0],
-            self.dem_manager.dems_decomposed[color].probs[0],
-        )
+        
+        # Use custom DEM data if provided, otherwise use DEM manager data
+        if custom_dem_data and color in custom_dem_data:
+            H, p = custom_dem_data[color][0]  # Stage 1 data (H1, p1)
+        else:
+            H, p = (
+                self.dem_manager.dems_decomposed[color].Hs[0],
+                self.dem_manager.dems_decomposed[color].probs[0],
+            )
 
         # Remove empty checks
         checks_to_keep = H.tocsr().getnnz(axis=1) > 0
@@ -477,6 +492,7 @@ class ConcatMatchingDecoder(BaseDecoder):
         detector_outcomes: np.ndarray,
         preds_dem1: np.ndarray,
         color: COLOR_LABEL,
+        custom_dem_data: Optional[Dict[str, Tuple[Tuple, Tuple]]] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform stage 2 decoding for a specific color.
@@ -510,10 +526,14 @@ class ConcatMatchingDecoder(BaseDecoder):
         det_outcome_dem2 = np.concatenate([det_outcome_dem2, preds_dem1], axis=1)
 
         # Stage 2 MWPM decoding
-        H, p = (
-            self.dem_manager.dems_decomposed[color].Hs[1],
-            self.dem_manager.dems_decomposed[color].probs[1],
-        )
+        # Use custom DEM data if provided, otherwise use DEM manager data
+        if custom_dem_data and color in custom_dem_data:
+            H, p = custom_dem_data[color][1]  # Stage 2 data (H2, p2)
+        else:
+            H, p = (
+                self.dem_manager.dems_decomposed[color].Hs[1],
+                self.dem_manager.dems_decomposed[color].probs[1],
+            )
         weights = np.log((1 - p) / p)
         matching = pymatching.Matching.from_check_matrix(H, weights=weights)
         preds, weights_new = matching.decode_batch(

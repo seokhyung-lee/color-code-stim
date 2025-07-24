@@ -25,7 +25,7 @@ from statsmodels.stats.proportion import proportion_confint
 
 from .circuit_builder import CircuitBuilder
 from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_val_to_color
-from .decoders import ConcatMatchingDecoder, BPDecoder
+from .decoders import ConcatMatchingDecoder, BPDecoder, BeliefConcatMatchingDecoder
 from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
 from .dem_utils.dem_decomp import DemDecomp
@@ -72,6 +72,7 @@ class ColorCode:
     _dem_manager: Optional[DemManager]
     _concat_matching_decoder: Optional[ConcatMatchingDecoder]
     _bp_decoder: Optional[BPDecoder]
+    _belief_concat_matching_decoder: Optional[BeliefConcatMatchingDecoder]
 
     def __init__(
         self,
@@ -334,6 +335,7 @@ class ColorCode:
         # Initialize decoders (lazy loading)
         self._concat_matching_decoder = None
         self._bp_decoder = None
+        self._belief_concat_matching_decoder = None
 
         self._bp_inputs = {}
 
@@ -401,6 +403,7 @@ class ColorCode:
         """Delegate to DEM manager."""
         return self.dem_manager.dems_decomposed
 
+
     @property
     def concat_matching_decoder(self) -> ConcatMatchingDecoder:
         """Lazy loading property for concatenated matching decoder."""
@@ -423,6 +426,19 @@ class ColorCode:
                 cache_inputs=True,
             )
         return self._bp_decoder
+
+    @property
+    def belief_concat_matching_decoder(self) -> BeliefConcatMatchingDecoder:
+        """Lazy loading property for belief propagation + concatenated matching decoder."""
+        if self._belief_concat_matching_decoder is None:
+            self._belief_concat_matching_decoder = BeliefConcatMatchingDecoder(
+                dem_manager=self.dem_manager,
+                circuit_type=self.circuit_type,
+                num_obs=self.num_obs,
+                comparative_decoding=self.comparative_decoding,
+                bp_cache_inputs=True,
+            )
+        return self._belief_concat_matching_decoder
 
     def get_detector_type(self, detector_id: int) -> Tuple[PAULI_LABEL, COLOR_LABEL]:
         coords = self.circuit.get_detector_coordinates(only=[detector_id])[detector_id]
@@ -682,69 +698,19 @@ class ColorCode:
         extra_outputs : dict, only when full_output is True
             Dictionary containing additional decoding outputs.
         """
-        # Handle BP pre-decoding specially before delegating to ConcatMatchingDecoder
+        # Handle BP pre-decoding by delegating to BeliefConcatMatchingDecoder
         if bp_predecoding:
-            if bp_prms is None:
-                bp_prms = {}
-
-            # Ensure detector_outcomes is 2D for processing
-            detector_outcomes = np.asarray(detector_outcomes, dtype=bool)
-            if detector_outcomes.ndim == 1:
-                detector_outcomes = detector_outcomes.reshape(1, -1)
-
-            # Process colors parameter
-            if colors == "all":
-                colors = ["r", "g", "b"]
-            elif colors in ["r", "g", "b"]:
-                colors = [colors]
-
-            # Run BP pre-decoding
-            _, llrs, _ = self.decode_bp(detector_outcomes, **bp_prms)
-            bp_probs = 1 / (1 + np.exp(llrs))
-            eps = 1e-14
-            bp_probs = bp_probs.clip(eps, 1 - eps)
-
-            error_preds = []
-            extra_outputs = {}
-            for det_outcomes_sng in detector_outcomes:
-                dems = {}
-                for c in colors:
-                    dem1_sym, dem2_sym = self.dems_decomposed[c].dems_symbolic
-                    dem1 = dem1_sym.to_dem(self._bp_inputs["p"])
-                    dem2 = dem2_sym.to_dem(self._bp_inputs["p"], sort=True)
-                    dems[c] = (dem1, dem2)
-
-                # Recursive call without BP pre-decoding
-                results = self.decode(
-                    det_outcomes_sng.reshape(1, -1),
-                    colors=colors,
-                    logical_value=logical_value,
-                    bp_predecoding=False,  # Prevent infinite recursion
-                    erasure_matcher_predecoding=erasure_matcher_predecoding,
-                    partial_correction_by_predecoding=partial_correction_by_predecoding,
-                    full_output=full_output,
-                    check_validity=check_validity,
-                    verbose=verbose,
-                )
-                if full_output:
-                    obs_preds_sng, extra_outputs_sng = results
-                    for k, v in extra_outputs_sng.items():
-                        try:
-                            extra_outputs[k].append(v)
-                        except KeyError:
-                            extra_outputs[k] = [v]
-                else:
-                    obs_preds_sng = results
-                error_preds.append(obs_preds_sng)
-
-            error_preds = np.concatenate(error_preds, axis=0)
-            for k, v in extra_outputs.items():
-                extra_outputs[k] = np.concatenate(v, axis=0)
-
-            if full_output:
-                return error_preds, extra_outputs
-            else:
-                return error_preds
+            return self.belief_concat_matching_decoder.decode(
+                detector_outcomes=detector_outcomes,
+                colors=colors,
+                logical_value=logical_value,
+                bp_prms=bp_prms,
+                erasure_matcher_predecoding=erasure_matcher_predecoding,
+                partial_correction_by_predecoding=partial_correction_by_predecoding,
+                full_output=full_output,
+                check_validity=check_validity,
+                verbose=verbose,
+            )
 
         # Delegate to ConcatMatchingDecoder for standard decoding
         return self.concat_matching_decoder.decode(

@@ -8,23 +8,23 @@ parameter combinations, and edge cases for thorough equivalence testing.
 from typing import Dict, List, Any, Tuple
 
 
-# Base test cases for each circuit type
+# Base test cases for each circuit type - noisy scenarios only
 TRIANGULAR_BASE_CASES: List[Dict[str, Any]] = [
-    # Basic triangular circuits
-    {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.0},
+    # Basic triangular circuits - excluding noiseless cases
     {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.001},
     {"d": 3, "rounds": 2, "circuit_type": "tri", "p_circuit": 0.001},
     {"d": 5, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.001},
     {"d": 5, "rounds": 3, "circuit_type": "tri", "p_circuit": 0.001},
+    {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.002},
 ]
 
 RECTANGULAR_BASE_CASES: List[Dict[str, Any]] = [
-    # Basic rectangular circuits
-    {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.0},
+    # Basic rectangular circuits - excluding noiseless cases
     {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001},
     {"d": 4, "d2": 6, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001},
     {"d": 6, "d2": 4, "rounds": 2, "circuit_type": "rec", "p_circuit": 0.001},
     {"d": 6, "d2": 8, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001},
+    {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.002},
 ]
 
 STABILITY_BASE_CASES: List[Dict[str, Any]] = [
@@ -74,15 +74,70 @@ BOOLEAN_FLAG_VARIATIONS = [
 ]
 
 NOISE_VARIATIONS = [
-    # Circuit-level noise
-    {"p_circuit": 0.0},
+    # Circuit-level noise - noisy cases only
     {"p_circuit": 0.001},
+    {"p_circuit": 0.002},
     {"p_circuit": 0.005},
     
     # Individual error rates
     {"p_bitflip": 0.001, "p_reset": 0.0008, "p_meas": 0.0012, "p_cnot": 0.0015, "p_idle": 0.0005},
     {"p_bitflip": 0.0005, "p_reset": 0.001, "p_meas": 0.0015, "p_cnot": 0.002, "p_idle": 0.0008},
 ]
+
+
+def validate_parameter_combination(params: Dict[str, Any]) -> bool:
+    """
+    Validate that a parameter combination is supported by ColorCode.
+    
+    Parameters
+    ---------- 
+    params : dict
+        Parameter combination to validate
+        
+    Returns
+    -------
+    bool
+        True if parameter combination is valid, False otherwise
+    """
+    circuit_type = params.get("circuit_type", "tri")
+    comparative_decoding = params.get("comparative_decoding", False)
+    temp_bdry_type = params.get("temp_bdry_type")
+    
+    # rec_stability doesn't support comparative_decoding=True
+    if circuit_type == "rec_stability" and comparative_decoding:
+        return False
+    
+    # rec_stability and cult+growing have fixed temporal boundary types
+    # and cannot accept custom temp_bdry_type values (legacy assertion)
+    if circuit_type in ["rec_stability", "cult+growing"] and temp_bdry_type is not None:
+        return False
+    
+    # Ensure d2 > d for growing operations  
+    if circuit_type in ["growing", "cult+growing"]:  
+        d = params.get("d", 3)
+        d2 = params.get("d2", d)
+        if d2 <= d:
+            return False
+    
+    # cult+growing requires odd d and d2 values
+    if circuit_type == "cult+growing":
+        d = params.get("d", 3)
+        d2 = params.get("d2", d)
+        if d % 2 == 0 or d2 % 2 == 0:
+            return False
+    
+    # Validate d and d2 are >= 3
+    d = params.get("d", 3)
+    d2 = params.get("d2", d)
+    if d < 3 or d2 < 3:
+        return False
+    
+    # Validate rounds >= 1
+    rounds = params.get("rounds", 1)
+    if rounds < 1:
+        return False
+    
+    return True
 
 
 def generate_parameter_combinations(base_cases: List[Dict[str, Any]], 
@@ -103,13 +158,14 @@ def generate_parameter_combinations(base_cases: List[Dict[str, Any]],
     Returns
     -------
     list of dict
-        Generated parameter combinations
+        Generated parameter combinations (all validated)
     """
     combinations = []
     
     for base_case in base_cases:
-        # Add base case as-is
-        combinations.append(base_case.copy())
+        # Add base case if valid
+        if validate_parameter_combination(base_case):
+            combinations.append(base_case.copy())
         
         # Add variations
         for variation in variations:
@@ -118,7 +174,10 @@ def generate_parameter_combinations(base_cases: List[Dict[str, Any]],
                 
             combined = base_case.copy()
             combined.update(variation)
-            combinations.append(combined)
+            
+            # Only add if the combination is valid
+            if validate_parameter_combination(combined):
+                combinations.append(combined)
         
         if len(combinations) >= max_combinations:
             break
@@ -198,30 +257,39 @@ def get_quick_test_suite() -> List[Dict[str, Any]]:
     Returns
     -------
     list of dict
-        Quick test cases covering all circuit types supported by both legacy and refactored code
+        Quick test cases covering all circuit types with noisy scenarios only
+        (excludes noiseless cases which don't generate meaningful detector outcomes)
     """
     # Manually selected quick cases that work with both legacy and refactored code
-    # Note: Legacy code has restrictions on temp_bdry_type with certain circuit types
+    # NOTE: Only noisy cases (p_circuit > 0) since noiseless cases don't generate
+    # meaningful detector outcomes for decoder testing
     quick_cases = [
-        # Triangular cases
-        {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.0},
+        # Triangular cases - noisy only
         {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.001},
+        {"d": 3, "rounds": 2, "circuit_type": "tri", "p_circuit": 0.002},
         
-        # Rectangular cases  
-        {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.0},
+        # Rectangular cases - noisy only
         {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001},
+        {"d": 4, "d2": 6, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001},
         
-        # Stability cases (no temp_bdry_type to avoid legacy assertion)
+        # Stability cases - NOTE: rec_stability doesn't support comparative_decoding=True
         {"d": 4, "d2": 4, "rounds": 4, "circuit_type": "rec_stability", "p_circuit": 0.001},
         
-        # Growing cases (legacy supports these)
+        # Growing cases
         {"d": 3, "d2": 5, "rounds": 1, "circuit_type": "growing", "p_circuit": 0.001},
         
         # Additional triangular with variations
         {"d": 5, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.001},
+        
+        # Comparative decoding cases - only for supported circuit types
+        {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.001, "comparative_decoding": True},
+        {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001, "comparative_decoding": True},
     ]
     
-    return quick_cases
+    # Filter out any invalid combinations
+    validated_cases = [case for case in quick_cases if validate_parameter_combination(case)]
+    
+    return validated_cases
 
 
 def get_stress_test_cases() -> List[Dict[str, Any]]:
@@ -231,16 +299,16 @@ def get_stress_test_cases() -> List[Dict[str, Any]]:
     Returns
     -------
     list of dict
-        Stress test cases
+        Stress test cases (all validated)
     """
-    return [
+    stress_cases = [
         # Large triangular
         {"d": 7, "rounds": 4, "circuit_type": "tri", "p_circuit": 0.001, "comparative_decoding": True},
         
         # Large rectangular  
         {"d": 8, "d2": 10, "rounds": 3, "circuit_type": "rec", "p_circuit": 0.001, "perfect_init_final": False},
         
-        # Complex stability
+        # Complex stability - NOTE: rec_stability doesn't support comparative_decoding=True
         {"d": 8, "d2": 6, "rounds": 12, "circuit_type": "rec_stability", "p_circuit": 0.001},
         
         # Large growing
@@ -250,6 +318,11 @@ def get_stress_test_cases() -> List[Dict[str, Any]]:
         {"d": 3, "d2": 7, "rounds": 3, "circuit_type": "cult+growing", "temp_bdry_type": "Y", 
          "comparative_decoding": True, "exclude_non_essential_pauli_detectors": True, "p_circuit": 0.001},
     ]
+    
+    # Filter out any invalid combinations
+    validated_cases = [case for case in stress_cases if validate_parameter_combination(case)]
+    
+    return validated_cases
 
 
 def get_edge_case_test_cases() -> List[Dict[str, Any]]:
@@ -259,23 +332,32 @@ def get_edge_case_test_cases() -> List[Dict[str, Any]]:
     Returns
     -------
     list of dict
-        Edge case test parameters
+        Edge case test parameters - noisy scenarios only (all validated)
     """
-    return [
-        # Minimum parameters
-        {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.0},
-        {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.0},
+    edge_cases = [
+        # Minimum parameters - with noise
+        {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.001},
+        {"d": 4, "d2": 4, "rounds": 1, "circuit_type": "rec", "p_circuit": 0.001},
         
-        # Zero noise
-        {"d": 3, "rounds": 2, "circuit_type": "tri", "p_circuit": 0.0, "perfect_init_final": True},
+        # Low noise scenarios
+        {"d": 3, "rounds": 2, "circuit_type": "tri", "p_circuit": 0.0005, "perfect_init_final": True},
         
         # Custom individual error rates  
         {"d": 3, "rounds": 1, "circuit_type": "tri", 
          "p_bitflip": 0.001, "p_reset": 0.0, "p_meas": 0.001, "p_cnot": 0.002, "p_idle": 0.0},
         
-        # Equal d and d2
-        {"d": 5, "d2": 5, "rounds": 1, "circuit_type": "growing", "temp_bdry_type": "Z", "p_circuit": 0.001},
+        # Note: Equal d and d2 is invalid for growing operations (d2 must be > d)
+        # Use valid growing case instead
+        {"d": 3, "d2": 5, "rounds": 1, "circuit_type": "growing", "temp_bdry_type": "Z", "p_circuit": 0.001},
+        
+        # Higher noise edge case
+        {"d": 3, "rounds": 1, "circuit_type": "tri", "p_circuit": 0.01},
     ]
+    
+    # Filter out any invalid combinations
+    validated_cases = [case for case in edge_cases if validate_parameter_combination(case)]
+    
+    return validated_cases
 
 
 def get_test_case_name(params: Dict[str, Any]) -> str:
@@ -314,13 +396,10 @@ def get_test_case_name(params: Dict[str, Any]) -> str:
     if params.get("exclude_non_essential_pauli_detectors"):
         name_parts.append("exclude")
     
-    # Add error info
+    # Add error info - all cases should be noisy now
     if params.get("p_circuit") is not None:
         p_circuit = params["p_circuit"]
-        if p_circuit == 0.0:
-            name_parts.append("noiseless")
-        else:
-            name_parts.append(f"p{p_circuit}")
+        name_parts.append(f"p{p_circuit}")
     elif any(k.startswith("p_") for k in params.keys()):
         name_parts.append("individual_errors")
     

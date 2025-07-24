@@ -1543,12 +1543,24 @@ class ColorCode:
                 dem = remove_obs_from_dem(self.dem_xz)
             else:
                 dem = self.dem_xz
-            H, p = dem_to_parity_check(dem)
+            H, _, p = dem_to_parity_check(dem)
+            # Convert H to uint8 as required by ldpc.BpDecoder
+            H = H.astype('uint8')
             bp_inputs["H"] = H
             bp_inputs["p"] = p
 
+        # Filter detector outcomes to match the DEM dimensions when observables are removed
+        if self.comparative_decoding:
+            expected_detectors = H.shape[0]
+            if detector_outcomes.shape[-1] != expected_detectors:
+                # Truncate to match the number of detectors in the filtered DEM
+                detector_outcomes = detector_outcomes[..., :expected_detectors]
+
+        # Filter kwargs to only include valid BpDecoder parameters
+        bp_kwargs = {k: v for k, v in kwargs.items() if k in ['bp_method', 'schedule', 'ms_scaling_factor', 'bp_method', 'bp_method_type']}
+        
         if detector_outcomes.ndim == 1:
-            bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **kwargs)
+            bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **bp_kwargs)
             pred = bpd.decode(detector_outcomes)
             llrs = bpd.log_prob_ratios
             converge = bpd.converge
@@ -1557,7 +1569,7 @@ class ColorCode:
             llrs = []
             converge = []
             for det_sng in detector_outcomes:
-                bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **kwargs)
+                bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **bp_kwargs)
                 pred.append(bpd.decode(det_sng))
                 llrs.append(bpd.log_prob_ratios)
                 converge.append(bpd.converge)
@@ -2009,7 +2021,7 @@ class ColorCode:
         possible_errors = []
         for c in ["r", "g", "b"]:
             preds_dem1_c = preds_dem1[c]
-            error_map_matrix = self.dems_sym_decomposed[c][0].error_map_matrix
+            error_map_matrix = self.dems_decomposed[c].dems_symbolic[0].error_map_matrix
             possible_errors_c = (preds_dem1_c.astype("uint8") @ error_map_matrix) > 0
             possible_errors.append(possible_errors_c)
         possible_errors = np.stack(possible_errors, axis=-1)

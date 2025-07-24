@@ -124,10 +124,20 @@ class BPDecoder(BaseDecoder):
                 self._cached_inputs = {"H": H, "p": p}
 
         detector_outcomes = np.asarray(detector_outcomes)
+        
+        # Filter detector outcomes to match the DEM dimensions when observables are removed
+        if self.comparative_decoding:
+            expected_detectors = H.shape[0]
+            if detector_outcomes.shape[-1] != expected_detectors:
+                # Truncate to match the number of detectors in the filtered DEM
+                detector_outcomes = detector_outcomes[..., :expected_detectors]
 
+        # Filter kwargs to only include valid BpDecoder parameters
+        bp_kwargs = {k: v for k, v in kwargs.items() if k in ['bp_method', 'schedule', 'ms_scaling_factor', 'bp_method_type']}
+        
         if detector_outcomes.ndim == 1:
             # Single sample decoding
-            bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **kwargs)
+            bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **bp_kwargs)
             pred = bpd.decode(detector_outcomes)
             llrs = bpd.log_prob_ratios
             converge = bpd.converge
@@ -139,7 +149,7 @@ class BPDecoder(BaseDecoder):
             converge = []
 
             for det_sng in detector_outcomes:
-                bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **kwargs)
+                bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **bp_kwargs)
                 pred.append(bpd.decode(det_sng))
                 llrs.append(bpd.log_prob_ratios)
                 converge.append(bpd.converge)
@@ -171,7 +181,10 @@ class BPDecoder(BaseDecoder):
             dem = remove_obs_from_dem(dem)
 
         # Convert DEM to parity check matrix and probabilities
-        H, p = dem_to_parity_check(dem)
+        H, _, p = dem_to_parity_check(dem)
+        
+        # Convert H to uint8 as required by ldpc.BpDecoder
+        H = H.astype('uint8')
 
         return H, p
 

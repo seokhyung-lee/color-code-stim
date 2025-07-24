@@ -252,7 +252,7 @@ This hybrid approach balances simplicity with organization:
 - Clean interfaces for decoder access
 - All DEM-related tests pass
 
-### Phase 4: Decoder Extraction (Week 6)
+### Phase 4: Decoder Extraction (Done!)
 
 #### Objectives
 - Modularize decoding algorithms
@@ -327,7 +327,7 @@ This hybrid approach balances simplicity with organization:
 - Decoder tests maintain same accuracy
 - Clean separation between decoding strategies
 
-### Phase 5: Simulation Extraction (Week 7)
+### Phase 5: Simulation Extraction
 
 #### Objectives
 - Separate simulation from core logic

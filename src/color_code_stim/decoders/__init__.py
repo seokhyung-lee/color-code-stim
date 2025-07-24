@@ -9,5 +9,6 @@ accessing decomposed detector error models.
 from .base import BaseDecoder
 from .concat_matching_decoder import ConcatMatchingDecoder
 from .bp_decoder import BPDecoder
+from .belief_concat_matching_decoder import BeliefConcatMatchingDecoder
 
-__all__ = ["BaseDecoder", "ConcatMatchingDecoder", "BPDecoder"]
+__all__ = ["BaseDecoder", "ConcatMatchingDecoder", "BPDecoder", "BeliefConcatMatchingDecoder"]
