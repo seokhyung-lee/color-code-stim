@@ -24,7 +24,7 @@ from scipy.sparse import csc_matrix, csr_matrix
 from statsmodels.stats.proportion import proportion_confint
 
 from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
-from .dem_decomp import DemDecomp
+from .dem_utils.dem_decomp import DemDecomp
 from .stim_utils import (
     dem_to_parity_check,
     remove_obs_from_dem,

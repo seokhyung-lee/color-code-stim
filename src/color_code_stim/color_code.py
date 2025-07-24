@@ -24,16 +24,17 @@ from scipy.sparse import csc_matrix, csr_matrix
 from statsmodels.stats.proportion import proportion_confint
 
 from .circuit_builder import CircuitBuilder
-from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_to_color_val, color_val_to_color
+from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_val_to_color
+from .decoders import ConcatMatchingDecoder, BPDecoder
 from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
-from .dem_decomp import DemDecomp
-from .dem_manager import DEMManager
+from .dem_utils.dem_decomp import DemDecomp
+from .dem_utils.dem_manager import DemManager
 from .stim_utils import (
     dem_to_parity_check,
     remove_obs_from_dem,
 )
-from .utils import _get_final_predictions, get_pfail, get_project_folder, timeit
+from .utils import get_pfail, get_project_folder, timeit
 from .visualization import draw_lattice, draw_tanner_graph
 
 
@@ -68,7 +69,9 @@ class ColorCode:
     remove_non_edge_like_errors: bool
     _benchmarking: bool
     _bp_inputs: Dict[str, Any]
-    _dem_manager: Optional[DEMManager]
+    _dem_manager: Optional[DemManager]
+    _concat_matching_decoder: Optional[ConcatMatchingDecoder]
+    _bp_decoder: Optional[BPDecoder]
 
     def __init__(
         self,
@@ -327,15 +330,19 @@ class ColorCode:
         self._dem_manager = None
         self._generate_dem = _generate_dem
         self._decompose_dem = _decompose_dem
-        
+
+        # Initialize decoders (lazy loading)
+        self._concat_matching_decoder = None
+        self._bp_decoder = None
+
         self._bp_inputs = {}
 
     @property
-    def dem_manager(self) -> DEMManager:
+    def dem_manager(self) -> DemManager:
         """Lazy loading property for DEM Manager."""
         if self._dem_manager is None:
             if self._generate_dem:
-                self._dem_manager = DEMManager(
+                self._dem_manager = DemManager(
                     circuit=self.circuit,
                     tanner_graph=self.tanner_graph,
                     circuit_type=self.circuit_type,
@@ -347,52 +354,75 @@ class ColorCode:
                 # when _generate_dem is False
                 raise NotImplementedError("DEM generation is disabled")
         return self._dem_manager
-    
+
     # Property delegation for backward compatibility
     @property
     def dem_xz(self) -> stim.DetectorErrorModel:
         """Delegate to DEM manager."""
         return self.dem_manager.dem_xz
-    
+
     @property
     def H(self) -> csc_matrix:
         """Delegate to DEM manager."""
         return self.dem_manager.H
-    
+
     @property
     def obs_matrix(self) -> csc_matrix:
         """Delegate to DEM manager."""
         return self.dem_manager.obs_matrix
-    
+
     @property
     def probs_xz(self) -> np.ndarray:
         """Delegate to DEM manager."""
         return self.dem_manager.probs_xz
-    
+
     @property
     def detector_ids_by_color(self) -> Dict[COLOR_LABEL, List[int]]:
         """Delegate to DEM manager."""
         return self.dem_manager.detector_ids_by_color
-    
+
     @property
     def cult_detector_ids(self) -> List[int]:
         """Delegate to DEM manager."""
         return self.dem_manager.cult_detector_ids
-    
+
     @property
     def interface_detector_ids(self) -> List[int]:
         """Delegate to DEM manager."""
         return self.dem_manager.interface_detector_ids
-    
+
     @property
     def detectors_checks_map(self) -> List[Tuple[ig.Vertex, int]]:
         """Delegate to DEM manager."""
         return self.dem_manager.detectors_checks_map
-    
+
     @property
     def dems_decomposed(self) -> Dict[COLOR_LABEL, DemDecomp]:
         """Delegate to DEM manager."""
         return self.dem_manager.dems_decomposed
+
+    @property
+    def concat_matching_decoder(self) -> ConcatMatchingDecoder:
+        """Lazy loading property for concatenated matching decoder."""
+        if self._concat_matching_decoder is None:
+            self._concat_matching_decoder = ConcatMatchingDecoder(
+                dem_manager=self.dem_manager,
+                circuit_type=self.circuit_type,
+                num_obs=self.num_obs,
+                comparative_decoding=self.comparative_decoding,
+            )
+        return self._concat_matching_decoder
+
+    @property
+    def bp_decoder(self) -> BPDecoder:
+        """Lazy loading property for belief propagation decoder."""
+        if self._bp_decoder is None:
+            self._bp_decoder = BPDecoder(
+                dem_manager=self.dem_manager,
+                comparative_decoding=self.comparative_decoding,
+                cache_inputs=True,
+            )
+        return self._bp_decoder
 
     def get_detector_type(self, detector_id: int) -> Tuple[PAULI_LABEL, COLOR_LABEL]:
         coords = self.circuit.get_detector_coordinates(only=[detector_id])[detector_id]
@@ -412,13 +442,11 @@ class ColorCode:
     def get_observable_pauli(self, observable_id: int) -> PAULI_LABEL:
         return self.obs_paulis[observable_id]
 
-
     def get_decomposed_dems(
         self, color: COLOR_LABEL
     ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
         """Delegate to DEM manager."""
         return self.dem_manager.get_decomposed_dems(color)
-
 
     def draw_lattice(
         self,
@@ -560,9 +588,8 @@ class ColorCode:
         """
         Decode detector outcomes using belief propagation.
 
-        This method uses the LDPC belief propagation decoder to decode the detector outcomes.
-        It converts the detector error model to a parity check matrix and probability vector,
-        then uses these to initialize a BpDecoder.
+        This method delegates to the BPDecoder while maintaining backward compatibility
+        with the _bp_inputs caching mechanism for integration with pre-decoding.
 
         Parameters
         ----------
@@ -582,48 +609,18 @@ class ColorCode:
         converge : bool
             Whether the belief propagation algorithm converged within max_iter iterations.
         """
-        try:
-            from ldpc import BpDecoder
-        except ImportError:
-            raise ImportError(
-                "The 'ldpc' package is required for belief propagation decoding. "
-                "Please install it using: pip install ldpc"
-            )
-
-        bp_inputs = self._bp_inputs
-        if bp_inputs:
-            H = bp_inputs["H"]
-            p = bp_inputs["p"]
-        else:
+        # Update _bp_inputs cache for compatibility with pre-decoding integration
+        if not self._bp_inputs:
             if self.comparative_decoding:
                 dem = remove_obs_from_dem(self.dem_xz)
             else:
                 dem = self.dem_xz
             H, p = dem_to_parity_check(dem)
-            bp_inputs["H"] = H
-            bp_inputs["p"] = p
+            self._bp_inputs["H"] = H
+            self._bp_inputs["p"] = p
 
-        if detector_outcomes.ndim == 1:
-            bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **kwargs)
-            pred = bpd.decode(detector_outcomes)
-            llrs = bpd.log_prob_ratios
-            converge = bpd.converge
-        elif detector_outcomes.ndim == 2:
-            pred = []
-            llrs = []
-            converge = []
-            for det_sng in detector_outcomes:
-                bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **kwargs)
-                pred.append(bpd.decode(det_sng))
-                llrs.append(bpd.log_prob_ratios)
-                converge.append(bpd.converge)
-            pred = np.stack(pred, axis=0)
-            llrs = np.stack(llrs, axis=0)
-            converge = np.stack(converge, axis=0)
-        else:
-            raise ValueError
-
-        return pred, llrs, converge
+        # Delegate to BP decoder
+        return self.bp_decoder.decode(detector_outcomes, max_iter=max_iter, **kwargs)
 
     def decode(
         self,
@@ -639,7 +636,10 @@ class ColorCode:
         verbose: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, dict]:
         """
-        Decode given detector outcomes using given decomposed DEMs.
+        Decode detector outcomes using concatenated MWPM decoding.
+
+        This method delegates to the ConcatMatchingDecoder while preserving backward
+        compatibility and handling BP pre-decoding integration.
 
         Parameters
         ----------
@@ -682,32 +682,23 @@ class ColorCode:
         extra_outputs : dict, only when full_output is True
             Dictionary containing additional decoding outputs.
         """
-
-        if erasure_matcher_predecoding:
-            assert self.comparative_decoding
-
-        detector_outcomes = np.asarray(detector_outcomes, dtype=bool)
-        if detector_outcomes.ndim == 1:
-            detector_outcomes = detector_outcomes.reshape(1, -1)
-
-        if colors == "all":
-            colors = ["r", "g", "b"]
-        elif colors in ["r", "g", "b"]:
-            colors = [colors]
-
-        num_obs = self.num_obs
-
-        all_logical_values = np.array(
-            list(itertools.product([False, True], repeat=num_obs))
-        )
-
-        if logical_value is not None:
-            logical_value = np.asarray(logical_value, dtype=bool).ravel()
-            assert len(logical_value) == num_obs
-
+        # Handle BP pre-decoding specially before delegating to ConcatMatchingDecoder
         if bp_predecoding:
             if bp_prms is None:
                 bp_prms = {}
+
+            # Ensure detector_outcomes is 2D for processing
+            detector_outcomes = np.asarray(detector_outcomes, dtype=bool)
+            if detector_outcomes.ndim == 1:
+                detector_outcomes = detector_outcomes.reshape(1, -1)
+
+            # Process colors parameter
+            if colors == "all":
+                colors = ["r", "g", "b"]
+            elif colors in ["r", "g", "b"]:
+                colors = [colors]
+
+            # Run BP pre-decoding
             _, llrs, _ = self.decode_bp(detector_outcomes, **bp_prms)
             bp_probs = 1 / (1 + np.exp(llrs))
             eps = 1e-14
@@ -723,11 +714,17 @@ class ColorCode:
                     dem2 = dem2_sym.to_dem(self._bp_inputs["p"], sort=True)
                     dems[c] = (dem1, dem2)
 
+                # Recursive call without BP pre-decoding
                 results = self.decode(
                     det_outcomes_sng.reshape(1, -1),
-                    dems,
+                    colors=colors,
                     logical_value=logical_value,
+                    bp_predecoding=False,  # Prevent infinite recursion
+                    erasure_matcher_predecoding=erasure_matcher_predecoding,
+                    partial_correction_by_predecoding=partial_correction_by_predecoding,
                     full_output=full_output,
+                    check_validity=check_validity,
+                    verbose=verbose,
                 )
                 if full_output:
                     obs_preds_sng, extra_outputs_sng = results
@@ -749,445 +746,17 @@ class ColorCode:
             else:
                 return error_preds
 
-        if self.circuit_type == "cult+growing":
-            # Post-select based on the detector outcomes within cultivation
-            cult_interface_det_ids = (
-                self.cult_detector_ids + self.interface_detector_ids
-            )
-            cult_success = ~np.any(detector_outcomes[:, cult_interface_det_ids], axis=1)
-
-            detector_outcomes = detector_outcomes[cult_success, :]
-
-        # First round
-        num_logical_classes = (
-            len(all_logical_values)
-            if self.comparative_decoding and logical_value is None
-            else 1
+        # Delegate to ConcatMatchingDecoder for standard decoding
+        return self.concat_matching_decoder.decode(
+            detector_outcomes=detector_outcomes,
+            colors=colors,
+            logical_value=logical_value,
+            erasure_matcher_predecoding=erasure_matcher_predecoding,
+            partial_correction_by_predecoding=partial_correction_by_predecoding,
+            full_output=full_output,
+            check_validity=check_validity,
+            verbose=verbose,
         )
-        error_preds_stage1_all = []
-        if verbose:
-            print("First-round decoding:")
-        for i in range(num_logical_classes):
-            error_preds_stage1_all.append({})
-            for c in colors:
-                if verbose:
-                    print(f"    > logical class {i}, color {c}...")
-                if self.comparative_decoding:
-                    detector_outcomes_copy = detector_outcomes.copy()
-                    if logical_value is not None:
-                        detector_outcomes_copy[:, -num_obs:] = logical_value
-                    else:
-                        detector_outcomes_copy[:, -num_obs:] = all_logical_values[i]
-                    error_preds_stage1_all[i][c] = self._decode_stage1(
-                        detector_outcomes_copy, c
-                    )
-                else:
-                    error_preds_stage1_all[i][c] = self._decode_stage1(
-                        detector_outcomes, c
-                    )
-
-        # Erasure matcher predecoding
-        if erasure_matcher_predecoding:
-            assert len(error_preds_stage1_all) > 1
-
-            if verbose:
-                print("Erasure matcher predecoding:")
-            (
-                predecoding_obs_preds,
-                predecoding_error_preds,  # in self.dem_xz
-                predecoding_weights,
-                predecoding_success,
-            ) = self._erasure_matcher_predecoding(
-                error_preds_stage1_all, detector_outcomes
-            )
-
-            predecoding_failure = ~predecoding_success
-            detector_outcomes_left = detector_outcomes[predecoding_failure, :]
-            error_preds_stage1_left = [
-                {
-                    c: arr[predecoding_failure, :]
-                    for c, arr in error_preds_stage1_all[i].items()
-                }
-                for i in range(len(error_preds_stage1_all))
-            ]
-
-            if verbose:
-                print(
-                    "    > # of samples with successful predecoding:",
-                    predecoding_success.sum(),
-                )
-
-        else:
-            detector_outcomes_left = detector_outcomes
-            error_preds_stage1_left = error_preds_stage1_all
-
-        # Second round
-        if verbose:
-            print("Second-round decoding:")
-
-        num_left_samples = detector_outcomes_left.shape[0]
-        if num_left_samples > 0 and not (
-            erasure_matcher_predecoding and partial_correction_by_predecoding
-        ):
-            num_errors = self.H.shape[1]
-
-            error_preds = np.empty(
-                (num_logical_classes, len(colors), num_left_samples, num_errors),
-                dtype=bool,
-            )
-            weights = np.empty(
-                (num_logical_classes, len(colors), num_left_samples), dtype=float
-            )
-            for i in range(len(error_preds_stage1_left)):
-                for i_c, c in enumerate(colors):
-                    if verbose:
-                        print(f"    > logical class {i}, color {c}...")
-                    if self.comparative_decoding:
-                        detector_outcomes_copy = detector_outcomes_left.copy()
-                        if logical_value is not None:
-                            detector_outcomes_copy[:, -num_obs:] = logical_value
-                        else:
-                            detector_outcomes_copy[:, -num_obs:] = all_logical_values[i]
-                        error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_copy, error_preds_stage1_left[i][c], c
-                        )
-                    else:
-                        error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_left, error_preds_stage1_left[i][c], c
-                        )
-
-                    # Adjust to fit the original error order in self.dem_xz
-                    error_preds_new = self.dems_decomposed[c].map_errors_to_org_dem(
-                        error_preds_new, stage=2
-                    )
-
-                    error_preds[i, i_c, :, :] = error_preds_new
-                    weights[i, i_c, :] = weights_new
-
-            # Obtain best prediction for each logical class
-            # 1D arrays of int / int / float / float
-            best_logical_classes, best_color_inds, weights_final, logical_gaps = (
-                _get_final_predictions(weights)
-            )
-
-            error_preds_final = error_preds[
-                best_logical_classes, best_color_inds, np.arange(num_left_samples), :
-            ]
-
-            if self.comparative_decoding:
-                if logical_value is None:
-                    # Retrieve observable predictions from best_logical_classes
-                    obs_preds_final = all_logical_values[best_logical_classes]
-                    assert obs_preds_final.shape == (num_left_samples, num_obs)
-
-                else:
-                    # We already know the logical value
-                    obs_preds_final = np.tile(logical_value, (num_left_samples, 1))
-
-            else:
-                # Need to calculate observable predictions from error predictions
-                obs_preds_final = np.empty((num_left_samples, num_obs), dtype=bool)
-                for i_c, c in enumerate(colors):
-                    obs_matrix = self.obs_matrix
-                    # obs_matrix = self.dems_decomposed[c].obs_matrix_stage2
-                    mask = best_color_inds == i_c
-                    obs_preds_final[mask, :] = (
-                        (error_preds_final[mask, :].astype("uint8") @ obs_matrix.T) % 2
-                    ).astype(bool)
-
-            # Adjust best_colors in case colors != ["r", "g", "b"]
-            if colors == ["r", "g", "b"]:
-                best_colors = best_color_inds
-            else:
-                best_colors = np.array([color_to_color_val(c) for c in colors])[
-                    best_color_inds
-                ]
-
-        elif (
-            num_left_samples > 0
-            and erasure_matcher_predecoding
-            and partial_correction_by_predecoding
-        ):
-            # Apply partial correction based on the predecoding results and then run
-            # the decoder again.
-
-            predecoding_error_preds_failed = predecoding_error_preds[
-                predecoding_failure, :
-            ].astype("uint8")
-
-            def get_partial_corr(matrix):
-                corr = (predecoding_error_preds_failed @ matrix.T) % 2
-                return corr.astype(bool)
-
-            obs_partial_corr = get_partial_corr(self.obs_matrix)
-            det_partial_corr = get_partial_corr(self.H)
-            detector_outcomes_left ^= det_partial_corr
-
-            obs_preds_final = self.decode(
-                detector_outcomes_left,
-                colors=colors,
-                full_output=full_output,
-            )
-            if full_output:
-                obs_preds_final, extra_outputs = obs_preds_final
-            else:
-                extra_outputs = {}
-
-            if obs_preds_final.ndim == 1:
-                obs_preds_final = obs_preds_final[:, np.newaxis]
-
-            if full_output:
-                error_preds_final = extra_outputs["error_preds"]
-                best_colors = extra_outputs["best_colors"]
-                weights_final = extra_outputs["weights"]
-                logical_gaps = extra_outputs["logical_gaps"]
-
-        else:
-            error_preds_final = np.array([[]], dtype=bool)
-            obs_preds_final = np.array([[]], dtype=bool)
-            best_colors = np.array([], dtype=np.uint8)
-            weights_final = np.array([], dtype=float)
-            logical_gaps = np.array([], dtype=float)
-
-        # Merge predecoding & second-round decoding outcomes
-        if erasure_matcher_predecoding and np.any(predecoding_success):
-            if verbose:
-                print("Merging predecoding & second-round decoding outcomes")
-            # For samples with successful predecoding, use the predecoding results
-            full_obs_preds_final = predecoding_obs_preds.copy()
-            if full_output:
-                full_best_colors = np.full(detector_outcomes.shape[0], "P")
-                full_weights_final = predecoding_weights.copy()
-                full_logical_gaps = np.full(detector_outcomes.shape[0], -1)
-                full_error_preds_final = predecoding_error_preds.copy()
-
-            # For samples with failed predecoding, use the second-round decoding results
-            if detector_outcomes_left.shape[0] > 0:
-                if partial_correction_by_predecoding:
-                    # Apply partial correction
-                    obs_preds_final ^= obs_partial_corr
-                    if full_output:
-                        error_preds_final ^= predecoding_error_preds_failed.astype(bool)
-
-                full_obs_preds_final[predecoding_failure, :] = obs_preds_final
-
-                if full_output:
-                    full_best_colors[predecoding_failure] = best_colors
-                    full_weights_final[predecoding_failure] = weights_final
-                    full_logical_gaps[predecoding_failure] = logical_gaps
-                    full_error_preds_final[predecoding_failure, :] = error_preds_final
-
-            obs_preds_final = full_obs_preds_final
-            if full_output:
-                best_colors = full_best_colors
-                weights_final = full_weights_final
-                logical_gaps = full_logical_gaps
-                error_preds_final = full_error_preds_final
-
-        if check_validity:
-            det_preds = (error_preds_final.astype("uint8") @ self.H.T % 2).astype(bool)
-            validity = np.all(det_preds == detector_outcomes, axis=1)
-            if verbose:
-                if np.all(validity):
-                    print("All predictions are valid")
-                else:
-                    print(f"{np.sum(~validity)} invalid predictions found!")
-
-        if obs_preds_final.shape[1] == 1:
-            obs_preds_final = obs_preds_final.ravel()
-
-        if full_output:
-            extra_outputs = {
-                "best_colors": best_colors,
-                "weights": weights_final,
-                "error_preds": error_preds_final,
-            }
-
-            if len(error_preds_stage1_all) > 1:
-                extra_outputs["logical_gaps"] = logical_gaps
-                extra_outputs["logical_values"] = all_logical_values
-                if erasure_matcher_predecoding:
-                    extra_outputs["erasure_matcher_success"] = predecoding_success
-                    extra_outputs["predecoding_error_preds"] = predecoding_error_preds
-                    extra_outputs["predecoding_obs_preds"] = predecoding_obs_preds
-            if self.circuit_type == "cult+growing":
-                extra_outputs["cult_success"] = cult_success
-
-            if check_validity:
-                extra_outputs["validity"] = validity
-
-        if full_output:
-            return obs_preds_final, extra_outputs
-        else:
-            return obs_preds_final
-
-    def _decode_stage1(self, detector_outcomes: np.ndarray, color: str) -> np.ndarray:
-        det_outcomes_dem1 = detector_outcomes.copy()
-        H, p = self.dems_decomposed[color].Hs[0], self.dems_decomposed[color].probs[0]
-        checks_to_keep = H.tocsr().getnnz(axis=1) > 0
-        det_outcomes_dem1 = det_outcomes_dem1[:, checks_to_keep]
-        H = H[checks_to_keep, :]
-        weights = np.log((1 - p) / p)
-        matching = pymatching.Matching.from_check_matrix(H, weights=weights)
-        preds_dem1 = matching.decode_batch(det_outcomes_dem1)
-        del det_outcomes_dem1, matching
-
-        return preds_dem1
-
-    def _decode_stage2(
-        self,
-        detector_outcomes: np.ndarray,
-        preds_dem1: np.ndarray,
-        color: COLOR_LABEL,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        det_outcome_dem2 = detector_outcomes.copy()
-        mask = np.full_like(det_outcome_dem2, True)
-        mask[:, self.detector_ids_by_color[color]] = False
-        det_outcome_dem2[mask] = False
-        del mask
-        det_outcome_dem2 = np.concatenate([det_outcome_dem2, preds_dem1], axis=1)
-
-        H, p = self.dems_decomposed[color].Hs[1], self.dems_decomposed[color].probs[1]
-        weights = np.log((1 - p) / p)
-        matching = pymatching.Matching.from_check_matrix(H, weights=weights)
-        preds, weights_new = matching.decode_batch(
-            det_outcome_dem2, return_weights=True
-        )
-        return preds, weights_new
-
-    def _find_error_set_intersection(
-        self,
-        preds_dem1: Dict[COLOR_LABEL, np.ndarray],
-    ) -> np.ndarray:
-        """
-        Find the intersection of the error sets of the different colors.
-        """
-        possible_errors = []
-        for c in ["r", "g", "b"]:
-            preds_dem1_c = preds_dem1[c]
-            error_map_matrix = self.dems_sym_decomposed[c][0].error_map_matrix
-            possible_errors_c = (preds_dem1_c.astype("uint8") @ error_map_matrix) > 0
-            possible_errors.append(possible_errors_c)
-        possible_errors = np.stack(possible_errors, axis=-1)
-
-        # 2D array of bool with shape (num_samples, num_errors)
-        error_set_intersection = np.all(possible_errors, axis=-1).astype(bool)
-
-        return error_set_intersection
-
-    def _erasure_matcher_predecoding(
-        self,
-        preds_dem1_all: List[Dict[COLOR_LABEL, np.ndarray]],
-        detector_outcomes: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Predecoding using the erasure matcher method.
-
-        Parameters
-        ----------
-        preds_dem1_all : List[Dict[COLOR_LABEL, numpy array of bool/int]]
-            Predictions from the first round of decoding.
-            `preds_dem1_all[i][c]`: 2D array with shape (number of samples, number of errors in DEM1 for color `c`) that contains the predictions for the i-th logical class and the color `c`.
-        detector_outcomes : 2D numpy array of bool/int
-            Detector outcomes with shape (number of samples, number of detectors)
-
-        Returns
-        -------
-        obs_preds : 2D numpy array of bool
-            Observable predictions with shape (number of samples, number of observables).
-        error_preds : 2D numpy array of bool
-            Error predictions with shape (number of samples, number of errors).
-        weights : 1D numpy array of float
-            Prediction weights with shape (number of samples,).
-        validity : 1D numpy array of bool
-            Validity of the predictions with shape (number of samples,).
-            For samples with no valid predictions, `obs_preds`, `error_preds`,
-            and `weights` correspond to the smallest-weight invalid predictions.
-        """
-
-        detector_outcomes = np.asarray(detector_outcomes, dtype=bool)
-
-        # All combinations of logical values (logical classes)
-        all_logical_values = list(itertools.product([False, True], repeat=self.num_obs))
-        all_logical_values = np.array(all_logical_values)
-
-        ## Calculate the error set intersection and weights for each logical class
-        error_preds_all = []
-        weights_all = []
-        for preds_dem1 in preds_dem1_all:
-            error_preds = self._find_error_set_intersection(preds_dem1)
-            llrs_all = np.log((1 - self.probs_xz) / self.probs_xz)
-            llrs = np.zeros_like(error_preds, dtype=float)
-            llrs[error_preds] = llrs_all[np.where(error_preds)[1]]
-            weights = llrs.sum(axis=1)
-            error_preds_all.append(error_preds)
-            weights_all.append(weights)
-
-        # (num_samples, num_logical_classes, num_errors), bool
-        error_preds_all = np.stack(error_preds_all, axis=1)
-        # (num_samples, num_logical_classes), float
-        weights_all = np.stack(weights_all, axis=1)
-
-        num_samples = error_preds_all.shape[0]
-
-        ## Indices of logical classes sorted by prediction weight
-        # (num_samples, num_logical_classes), int
-        inds_logical_class_sorted = np.argsort(weights_all, axis=1)
-
-        ## Error predictions for each sample, sorted by prediction weight
-        # (num_samples, num_logical_classes, num_errors), uint8
-        error_preds_all_sorted = error_preds_all[
-            np.arange(num_samples)[:, np.newaxis], inds_logical_class_sorted
-        ].astype("uint8")
-
-        ## Weight for each sample, sorted by prediction weight
-        # (num_samples, num_logical_classes), float
-        weights_all_sorted = np.take_along_axis(
-            weights_all, inds_logical_class_sorted, axis=1
-        )
-
-        ## Check if the predictions are valid (match with detectors & observables)
-        # (num_samples, num_logical_classes), bool
-        match_with_dets = np.all(
-            ((error_preds_all_sorted @ self.H.T.toarray()) % 2).astype(bool)
-            == detector_outcomes[:, np.newaxis, :],
-            axis=-1,
-        )
-        # (num_samples, num_logical_classes, num_obs), bool
-        logical_classes_sorted = all_logical_values[inds_logical_class_sorted]
-        # (num_samples, num_logical_classes), bool
-        match_with_obss = np.all(
-            ((error_preds_all_sorted @ self.obs_matrix.T.toarray()) % 2).astype(bool)
-            == logical_classes_sorted,
-            axis=-1,
-        )
-        # (num_samples, num_logical_classes), bool
-        validity_full = match_with_dets & match_with_obss
-
-        ## Determine observable predictions among valid predictions for each sample
-        # (num_samples,), int
-        inds_first_valid_logical_classes = np.argmax(validity_full, axis=1)
-        # (num_samples, num_obs), bool
-        obs_preds = logical_classes_sorted[
-            np.arange(num_samples), inds_first_valid_logical_classes, :
-        ]
-        # (num_samples,), bool
-        validity = np.any(validity_full, axis=1)
-
-        # Prediction weights
-        # (num_samples,), float
-        weights = weights_all_sorted[
-            np.arange(num_samples), inds_first_valid_logical_classes
-        ]
-        weights[~validity] = np.inf
-
-        # Prediction errors
-        # (num_samples, num_errors), bool
-        error_preds = error_preds_all_sorted[
-            np.arange(num_samples), inds_first_valid_logical_classes, :
-        ]
-
-        return obs_preds, error_preds, weights, validity
 
     def sample(
         self, shots: int, seed: Optional[int] = None

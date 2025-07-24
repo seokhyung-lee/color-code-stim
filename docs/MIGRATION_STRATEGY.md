@@ -32,7 +32,7 @@ src/color_code_stim/
 ├── decoders/
 │   ├── __init__.py
 │   ├── base.py            # Simple base class/protocol
-│   ├── mwpm_decoder.py    # MWPM implementation
+│   ├── concat_matching_decoder.py    # Concat. MWPM decoder implementation
 │   └── bp_decoder.py      # BP implementation (if separated)
 ├── simulator.py           # Sampling and MC simulation
 ├── config.py              # Constants and types

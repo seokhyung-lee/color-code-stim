@@ -37,12 +37,15 @@ pytest tests/test_specific.py::test_function_name
 # Run equivalence tests between legacy and refactored implementations
 pytest tests/test_color_code_refactor/phase1_tests/ -v    # Circuit generation equivalence
 pytest tests/test_color_code_refactor/phase2_tests/ -v    # Tanner graph equivalence
+pytest tests/test_color_code_refactor/phase3_tests/ -v    # DEM management equivalence
+pytest tests/test_color_code_refactor/phase4_tests/ -v    # Decoder equivalence
 pytest tests/test_color_code_refactor/integration_tests/ -v # Integration and performance tests
 
 # Run quick validation tests
 pytest tests/test_color_code_refactor/phase1_tests/test_circuit_equivalence.py::TestPhase1CircuitEquivalence::test_quick_circuit_equivalence -v
 pytest tests/test_color_code_refactor/phase2_tests/test_tanner_graph_equivalence.py::TestPhase2TannerGraphEquivalence::test_quick_graph_equivalence -v
 pytest tests/test_color_code_refactor/phase3_tests/test_dem_equivalence.py::TestPhase3DEMEquivalence::test_quick_dem_equivalence -v
+pytest tests/test_color_code_refactor/phase4_tests/test_decoder_equivalence.py::TestPhase4DecoderEquivalence::test_quick_decoder_equivalence -v
 ```
 
 ## Code Architecture
@@ -79,7 +82,14 @@ pytest tests/test_color_code_refactor/phase3_tests/test_dem_equivalence.py::Test
    - `"growing"`: Growing operations from one distance to another
    - `"cult+growing"`: Cultivation followed by growing operations
 
-6. **DEM Decomposition** (`src/color_code_stim/dem_decomp.py`): Handles decomposition of detector error models by color for the concatenated decoder.
+5. **DEM Management** (`src/color_code_stim/dem_utils/`): Detector error model utilities:
+   - `dem_manager.py`: DEMManager class for DEM generation and decomposition
+   - `dem_decomp.py`: DemDecomp class for color-based DEM decomposition
+
+6. **Decoder Architecture** (`src/color_code_stim/decoders/`): Modular decoder implementations:
+   - `base.py`: BaseDecoder interface for all decoder implementations
+   - `concat_matching_decoder.py`: ConcatMatchingDecoder - sophisticated two-stage MWPM decoding with color-based decomposition
+   - `bp_decoder.py`: BPDecoder - belief propagation decoding with optional ldpc dependency
 
 7. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
 
@@ -98,7 +108,7 @@ pytest tests/test_color_code_refactor/phase3_tests/test_dem_equivalence.py::Test
 
 ### Important Implementation Details
 
-1. **Concatenated MWPM Decoder**: The decoder runs 6 MWPM decoders (2 per color) and combines results. When `comparative_decoding=True`, it evaluates all logical classes to find the minimum-weight correction.
+1. **Concatenated MWPM Decoder**: The ConcatMatchingDecoder runs 6 MWPM decoders (2 per color) and combines results. When `comparative_decoding=True`, it evaluates all logical classes to find the minimum-weight correction. The decoder now lives in the modular `decoders/` package with lazy loading integration.
 
 2. **Error Models**: Supports various noise parameters:
    - `p_bitflip`: Bit-flip noise rate
@@ -121,10 +131,11 @@ The project uses a comprehensive equivalence testing approach to validate the on
 9. **Legacy Reference** (`src/color_code_stim/color_code_legacy.py`): Copy of the original monolithic implementation used as ground truth for equivalence testing.
 
 10. **Modular Test Suite** (`tests/test_color_code_refactor/`): Phase-based equivalence testing structure:
-    - **Phase 1 Tests**: Circuit generation equivalence (CircuitBuilder vs legacy)
-    - **Phase 2 Tests**: Tanner graph construction equivalence (TannerGraphBuilder vs legacy)
+    - **Phase 1 Tests**: Circuit generation equivalence (CircuitBuilder vs legacy) ✅ Complete
+    - **Phase 2 Tests**: Tanner graph construction equivalence (TannerGraphBuilder vs legacy) ✅ Complete
+    - **Phase 3 Tests**: DEM management equivalence (DEMManager vs legacy) ✅ Complete
+    - **Phase 4 Tests**: Decoder equivalence (ConcatMatchingDecoder vs legacy) 🚧 In Progress
     - **Integration Tests**: End-to-end equivalence and performance regression testing
     - **Test Utilities**: Comprehensive comparison functions and test parameter generation
-    - **Future Phases**: Ready scaffolding for DEM, decoder, and simulation testing
 
 The test suite ensures 100% functional equivalence between the refactored modular implementation and the original monolithic codebase while enabling systematic validation of each migration phase.

@@ -1,11 +1,11 @@
-from typing import List, Literal, Optional, Sequence, Tuple
+from typing import List, Literal, Optional, Sequence, Tuple, Iterator
 
 import numpy as np
 import stim
 from scipy.sparse import csc_matrix, csr_matrix, spmatrix
 
-from .stim_symbolic import _DemSymbolic
-from .stim_utils import dem_to_parity_check
+from ..stim_symbolic import _DemSymbolic
+from ..stim_utils import dem_to_parity_check
 
 COLOR_LABEL = Literal["r", "g", "b"]
 
@@ -306,7 +306,7 @@ class DemDecomp:
         errors_org = errors @ error_map_matrix
         return errors_org
 
-    def __iter__(self) -> "Iterator[stim.DetectorErrorModel]":
+    def __iter__(self) -> Iterator[stim.DetectorErrorModel]:
         """
         Return an iterator over the decomposed detector error models.
 
@@ -334,139 +334,3 @@ class DemDecomp:
         """
 
         return self._dems[idx]
-
-    # def _precompute_best_org_error_map(self):
-    #     """
-    #     Precompute the best original error index mapping for `map_errors_to_org_dem()`
-    #     method.
-    #     """
-    #     best_maps = []
-    #     org_prob_flat = np.asarray(self.org_prob).flatten()  # Use stored org_prob
-    #     for stage_idx in range(2):  # For stage 1 (index 0) and stage 2 (index 1)
-    #         error_map_matrix = self.error_map_matrices[stage_idx]
-    #         num_decomp_errors, num_org_errors = error_map_matrix.shape
-
-    #         if org_prob_flat.shape[0] != num_org_errors:
-    #             raise ValueError(
-    #                 f"Shape mismatch during init: org_prob length {org_prob_flat.shape[0]} != "
-    #                 f"error_map_matrix cols {num_org_errors} for stage {stage_idx + 1}"
-    #             )
-
-    #         # Stores the index 'j' of the best original error for each decomp error 'i'
-    #         best_org_error_indices = np.full(num_decomp_errors, -1, dtype=int)
-    #         for i in range(num_decomp_errors):
-    #             # Find non-zero column indices 'j' for row 'i'
-    #             start = error_map_matrix.indptr[i]
-    #             end = error_map_matrix.indptr[i + 1]
-    #             if start == end:
-    #                 continue  # Skip if row 'i' is empty
-
-    #             candidate_org_indices_j = error_map_matrix.indices[start:end]
-
-    #             if candidate_org_indices_j.size > 0:
-    #                 # Get probabilities for these candidates
-    #                 probs_for_candidates = org_prob_flat[candidate_org_indices_j]
-    #                 # Find index within candidates with max probability
-    #                 max_prob_local_idx = np.argmax(probs_for_candidates)
-    #                 # Get the actual original error index 'j'
-    #                 best_j = candidate_org_indices_j[max_prob_local_idx]
-    #                 best_org_error_indices[i] = best_j
-    #         best_maps.append(best_org_error_indices)
-
-    #     # Store the precomputed maps (one array for stage 1, one for stage 2)
-    #     return tuple(best_maps)
-
-    # def map_errors_to_org_dem(
-    #     self, errors: List[bool | int] | np.ndarray | spmatrix, *, stage: int
-    # ) -> np.ndarray:
-    #     """
-    #     Map errors from the decomposed DEM back to the original DEM format.
-
-    #     Parameters
-    #     ----------
-    #     errors : list, numpy array, or scipy sparse matrix of bool/int
-    #         Errors in the decomposed DEM for the specified stage. If it has more than
-    #         one dimension, the last dimension is assumed to index the errors.
-    #     stage : int
-    #         Which stage's errors to map (1 or 2).
-
-    #     Returns
-    #     -------
-    #     errors_org : numpy array of bool
-    #         Error array mapped to the original DEM format.
-    #     """
-    #     if stage not in [1, 2]:
-    #         raise ValueError("stage must be 1 or 2")
-
-    #     # --- 1. Retrieve precomputed mapping ---
-    #     best_org_error_indices = self._best_org_error_map[stage - 1]
-    #     num_decomp_errors = best_org_error_indices.shape[0]
-    #     num_org_errors = self.org_prob.shape[0]
-
-    #     # --- 2. Process the input 'errors' array ---
-    #     is_sparse_input = isinstance(errors, spmatrix)
-    #     input_is_1d_semantic = False  # Flag to track if input represents a 1D vector
-
-    #     if is_sparse_input:
-    #         # Check sparse shape before converting to dense
-    #         if errors.shape[0] == 1 or errors.shape[1] == 1:
-    #             input_is_1d_semantic = True
-    #         errors_np = errors.toarray().astype(np.uint8)
-    #     elif not isinstance(errors, np.ndarray):
-    #         # Includes list case
-    #         errors_np = np.asarray(errors, dtype=np.uint8)
-    #         if errors_np.ndim == 1:
-    #             input_is_1d_semantic = True
-    #     else:
-    #         errors_np = errors.astype(np.uint8, copy=False)
-    #         if errors_np.ndim == 1:
-    #             input_is_1d_semantic = True
-
-    #     # Validate shape consistency
-    #     if errors_np.shape[-1] != num_decomp_errors:
-    #         raise ValueError(
-    #             f"Last dimension of input errors ({errors_np.shape[-1]}) does not match "
-    #             f"number of decomposed errors ({num_decomp_errors}) for stage {stage}"
-    #         )
-
-    #     # --- 3. Map active decomposed errors to original errors using advanced indexing ---
-    #     # Calculate output shape based on the (potentially 2D) errors_np shape
-    #     output_shape = errors_np.shape[:-1] + (num_org_errors,)
-    #     errors_org = np.zeros(output_shape, dtype=bool)
-
-    #     active_indices = np.nonzero(errors_np)
-    #     if active_indices[0].size == 0:
-    #         # Return zeros with appropriate shape
-    #         if input_is_1d_semantic and errors_org.ndim > 1:
-    #             return np.zeros(num_org_errors, dtype=bool)  # Return 1D zeros
-    #         else:
-    #             return errors_org  # Return potentially multi-dim zeros
-
-    #     decomp_error_idx_i = active_indices[-1]
-    #     target_org_idx_j = best_org_error_indices[decomp_error_idx_i]
-    #     valid_mapping_mask = target_org_idx_j != -1
-
-    #     # Prepare final index tuple based on errors_np dimensions
-    #     if np.all(valid_mapping_mask):
-    #         if target_org_idx_j.size > 0:
-    #             final_index_tuple = active_indices[:-1] + (target_org_idx_j,)
-    #             errors_org[final_index_tuple] = True
-    #     elif np.any(valid_mapping_mask):
-    #         filtered_target_org_idx_j = target_org_idx_j[valid_mapping_mask]
-    #         filtered_active_indices = tuple(
-    #             idx_arr[valid_mapping_mask] for idx_arr in active_indices
-    #         )
-    #         final_index_tuple = filtered_active_indices[:-1] + (
-    #             filtered_target_org_idx_j,
-    #         )
-    #         errors_org[final_index_tuple] = True
-
-    #     # --- 4. Adjust final shape ---
-    #     # If the input was semantically 1D and output is 2D (e.g., (1, N)), reshape to 1D
-    #     if input_is_1d_semantic and errors_org.ndim > 1:
-    #         # Specifically handle the case where output is (1, N)
-    #         if errors_org.shape[0] == 1:
-    #             errors_org = errors_org.reshape(-1)  # Reshape (1, N) to (N,)
-    #         # Can add handling for (N, 1) output if that's possible and needs reshaping
-
-    #     return errors_org

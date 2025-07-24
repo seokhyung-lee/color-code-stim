@@ -13,21 +13,21 @@ import stim
 import igraph as ig
 from scipy.sparse import csc_matrix
 
-from .config import COLOR_LABEL, color_val_to_color
+from ..config import COLOR_LABEL, color_val_to_color
 from .dem_decomp import DemDecomp
-from .stim_utils import (
+from ..stim_utils import (
     dem_to_parity_check,
     separate_depolarizing_errors,
 )
 
 
-class DEMManager:
+class DemManager:
     """
     Manages detector error model generation, decomposition, and detector information.
-    
+
     This class handles DEM generation from quantum circuits, color-based decomposition
     for concatenated decoding, and detector ID mappings for visualization and analysis.
-    
+
     Attributes
     ----------
     circuit : stim.Circuit
@@ -53,7 +53,7 @@ class DEMManager:
     dems_decomposed : dict
         Color-decomposed DEMs for concatenated decoding
     """
-    
+
     def __init__(
         self,
         circuit: stim.Circuit,
@@ -64,7 +64,7 @@ class DEMManager:
     ):
         """
         Initialize DEMManager with circuit and configuration.
-        
+
         Parameters
         ----------
         circuit : stim.Circuit
@@ -84,30 +84,30 @@ class DEMManager:
         self.circuit_type = circuit_type
         self.comparative_decoding = comparative_decoding
         self.remove_non_edge_like_errors = remove_non_edge_like_errors
-        
+
         # Generate detector information first (needed for DEM generation)
         self.detector_info = self._generate_detector_info()
-        
+
         # Generate core DEM components
         self.dem_xz, self.H, self.obs_matrix, self.probs_xz = self._generate_dem()
-        
+
         # Decompose DEMs by color
         self.dems_decomposed = self._decompose_dems()
-    
+
     def _generate_detector_info(self) -> Dict[str, Any]:
         """
         Generate detector ID mappings and metadata.
-        
+
         Extracts detector information including color-based groupings,
         cultivation/interface detector identification, and detector-to-qubit mappings.
-        
+
         Returns
         -------
         dict
             Dictionary containing:
             - 'by_color': Dict mapping colors to detector ID lists
             - 'cult_ids': List of cultivation detector IDs
-            - 'interface_ids': List of interface detector IDs  
+            - 'interface_ids': List of interface detector IDs
             - 'checks_map': List mapping detector IDs to (qubit, time) tuples
         """
         tanner_graph = self.tanner_graph
@@ -172,32 +172,34 @@ class DEMManager:
             "checks_map": detectors_checks_map,
         }
 
-    def _generate_dem(self) -> Tuple[stim.DetectorErrorModel, csc_matrix, csc_matrix, np.ndarray]:
+    def _generate_dem(
+        self,
+    ) -> Tuple[stim.DetectorErrorModel, csc_matrix, csc_matrix, np.ndarray]:
         """
         Generate detector error model from the quantum circuit.
-        
+
         Creates the detector error model by separating depolarizing errors and
         generating the DEM. Handles special cases for cult+growing circuits
         including detector filtering and probability adjustment.
-        
+
         Returns
         -------
         tuple
             (dem_xz, H, obs_matrix, probs_xz) where:
             - dem_xz: Detector error model
             - H: Parity check matrix
-            - obs_matrix: Observable matrix  
+            - obs_matrix: Observable matrix
             - probs_xz: Error probabilities
         """
         circuit_xz = separate_depolarizing_errors(self.circuit)
         dem_xz = circuit_xz.detector_error_model(flatten_loops=True)
-        
+
         if self.circuit_type == "cult+growing":
             # Remove error mechanisms that involve detectors that will be post-selected
             dem_xz_new = stim.DetectorErrorModel()
             all_detids_in_dem_xz = set()
             cult_detector_ids = self.detector_info["cult_ids"]
-            
+
             for inst in dem_xz:
                 keep = True
                 if inst.type == "error":
@@ -245,9 +247,9 @@ class DEMManager:
     def _decompose_dems(self) -> Dict[COLOR_LABEL, DemDecomp]:
         """
         Decompose DEM by color for concatenated decoding.
-        
+
         Creates color-specific DEM decompositions for the concatenated MWPM decoder.
-        
+
         Returns
         -------
         dict
@@ -267,17 +269,17 @@ class DEMManager:
     def detector_ids_by_color(self) -> Dict[COLOR_LABEL, List[int]]:
         """Get detector IDs grouped by color."""
         return self.detector_info["by_color"]
-    
+
     @property
     def cult_detector_ids(self) -> List[int]:
         """Get cultivation detector IDs."""
         return self.detector_info["cult_ids"]
-    
+
     @property
     def interface_detector_ids(self) -> List[int]:
         """Get interface detector IDs."""
         return self.detector_info["interface_ids"]
-    
+
     @property
     def detectors_checks_map(self) -> List[Tuple[ig.Vertex, int]]:
         """Get detector-to-qubit mapping."""
@@ -288,12 +290,12 @@ class DEMManager:
     ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
         """
         Get decomposed detector error models for a specific color.
-        
+
         Parameters
         ----------
         color : COLOR_LABEL
             Color ('r', 'g', or 'b') for which to get decomposed DEMs
-            
+
         Returns
         -------
         tuple
