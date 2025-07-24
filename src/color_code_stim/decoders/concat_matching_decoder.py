@@ -271,11 +271,17 @@ class ConcatMatchingDecoder(BaseDecoder):
                                 all_logical_values[i]
                             )
                         error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_copy, error_preds_stage1_left[i][c], c, custom_dem_data
+                            detector_outcomes_copy,
+                            error_preds_stage1_left[i][c],
+                            c,
+                            custom_dem_data,
                         )
                     else:
                         error_preds_new, weights_new = self._decode_stage2(
-                            detector_outcomes_left, error_preds_stage1_left[i][c], c, custom_dem_data
+                            detector_outcomes_left,
+                            error_preds_stage1_left[i][c],
+                            c,
+                            custom_dem_data,
                         )
 
                     # Map errors back to original DEM ordering
@@ -441,10 +447,10 @@ class ConcatMatchingDecoder(BaseDecoder):
             return obs_preds_final
 
     def _decode_stage1(
-        self, 
-        detector_outcomes: np.ndarray, 
-        color: str, 
-        custom_dem_data: Optional[Dict[str, Tuple[Tuple, Tuple]]] = None
+        self,
+        detector_outcomes: np.ndarray,
+        color: str,
+        custom_dem_data: Optional[Dict[str, Tuple[Tuple, Tuple]]] = None,
     ) -> np.ndarray:
         """
         Perform stage 1 decoding for a specific color.
@@ -464,7 +470,7 @@ class ConcatMatchingDecoder(BaseDecoder):
             Stage 1 error predictions
         """
         det_outcomes_dem1 = detector_outcomes.copy()
-        
+
         # Use custom DEM data if provided, otherwise use DEM manager data
         if custom_dem_data and color in custom_dem_data:
             H, p = custom_dem_data[color][0]  # Stage 1 data (H1, p1)

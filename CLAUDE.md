@@ -39,6 +39,7 @@ pytest tests/test_color_code_refactor/phase1_tests/ -v    # Circuit generation e
 pytest tests/test_color_code_refactor/phase2_tests/ -v    # Tanner graph equivalence
 pytest tests/test_color_code_refactor/phase3_tests/ -v    # DEM management equivalence
 pytest tests/test_color_code_refactor/phase4_tests/ -v    # Decoder equivalence
+pytest tests/test_color_code_refactor/phase5_tests/ -v    # Simulation equivalence
 pytest tests/test_color_code_refactor/integration_tests/ -v # Integration and performance tests
 
 # Run quick validation tests
@@ -46,6 +47,7 @@ pytest tests/test_color_code_refactor/phase1_tests/test_circuit_equivalence.py::
 pytest tests/test_color_code_refactor/phase2_tests/test_tanner_graph_equivalence.py::TestPhase2TannerGraphEquivalence::test_quick_graph_equivalence -v
 pytest tests/test_color_code_refactor/phase3_tests/test_dem_equivalence.py::TestPhase3DEMEquivalence::test_quick_dem_equivalence -v
 pytest tests/test_color_code_refactor/phase4_tests/test_decoder_equivalence.py::TestPhase4DecoderEquivalence::test_quick_decoder_equivalence -v
+pytest tests/test_color_code_refactor/phase5_tests/test_simulation_equivalence.py::TestPhase5SimulationEquivalence::test_quick_simulation_equivalence -v
 ```
 
 ## Code Architecture
@@ -92,9 +94,13 @@ pytest tests/test_color_code_refactor/phase4_tests/test_decoder_equivalence.py::
    - `bp_decoder.py`: BPDecoder - belief propagation decoding with optional ldpc dependency
    - `belief_concat_matching_decoder.py`: BeliefConcatMatchingDecoder - combines BP pre-decoding with concatenated matching for improved performance
 
-7. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
+7. **Simulation Architecture** (`src/color_code_stim/simulation/`): Modular simulation and sampling functionality:
+   - `simulator.py`: Simulator class for Monte Carlo simulation and detector/observable sampling
+   - `sampling_utils.py`: Statistical analysis utilities and sampling helpers
 
-8. **Utilities**: 
+8. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
+
+9. **Utilities**: 
    - `stim_utils.py`: Helper functions for working with Stim circuits and error models
    - `visualization.py`: Plotting functions for lattices and Tanner graphs
    - `utils.py`: General utility functions for file I/O and performance calculations
@@ -129,13 +135,14 @@ The main entry point is the `ColorCode` class constructor in `color_code.py`. Ex
 
 The project uses a comprehensive equivalence testing approach to validate the ongoing modular refactoring:
 
-9. **Legacy Reference** (`src/color_code_stim/color_code_legacy.py`): Copy of the original monolithic implementation used as ground truth for equivalence testing.
+10. **Legacy Reference** (`src/color_code_stim/color_code_legacy.py`): Copy of the original monolithic implementation used as ground truth for equivalence testing.
 
-10. **Modular Test Suite** (`tests/test_color_code_refactor/`): Phase-based equivalence testing structure:
+11. **Modular Test Suite** (`tests/test_color_code_refactor/`): Phase-based equivalence testing structure:
     - **Phase 1 Tests**: Circuit generation equivalence (CircuitBuilder vs legacy) ✅ Complete
     - **Phase 2 Tests**: Tanner graph construction equivalence (TannerGraphBuilder vs legacy) ✅ Complete
     - **Phase 3 Tests**: DEM management equivalence (DEMManager vs legacy) ✅ Complete
     - **Phase 4 Tests**: Decoder equivalence (ConcatMatchingDecoder, BeliefConcatMatchingDecoder vs legacy) ✅ Complete
+    - **Phase 5 Tests**: Simulation equivalence (Simulator vs legacy) ✅ Complete
     - **Integration Tests**: End-to-end equivalence and performance regression testing
     - **Test Utilities**: Comprehensive comparison functions and test parameter generation
 
