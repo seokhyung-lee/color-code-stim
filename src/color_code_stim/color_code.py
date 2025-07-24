@@ -896,7 +896,6 @@ class ColorCode:
         """
         return self.simulator.sample_with_errors(shots, seed=seed)
 
-
     def simulate(
         self,
         shots: int,
@@ -957,6 +956,7 @@ class ColorCode:
             - 'logical_gaps': Array of logical gaps (only when self.logical_gap is True)
             - etc.
         """
+
         # Create decoder function for simulator
         def decoder_func(detector_outcomes, **decode_kwargs):
             return self.decode(
@@ -985,12 +985,40 @@ class ColorCode:
 
     # ----- Save/Load Methods -----
 
+    def _test_attribute_picklability(self) -> Tuple[List[str], List[str]]:
+        """
+        Test which attributes are picklable and which are not.
+        
+        Returns
+        -------
+        picklable : List[str]
+            List of attribute names that can be pickled
+        non_picklable : List[str]
+            List of attribute names that cannot be pickled
+        """
+        import pickle
+        import io
+        
+        picklable = []
+        non_picklable = []
+        
+        for attr_name, attr_value in self.__dict__.items():
+            try:
+                # Try to pickle the attribute
+                buffer = io.BytesIO()
+                pickle.dump(attr_value, buffer)
+                picklable.append(attr_name)
+            except Exception:
+                non_picklable.append(attr_name)
+        
+        return picklable, non_picklable
+
     def save(self, path: str):
         """
         Save the ColorCode object to a file using pickle.
 
-        Excludes non-picklable attributes: `detectors_checks_map`, `qubit_groups`,
-        `dems_decomposed`, and `_bp_inputs`. These will be reconstructed upon loading.
+        Automatically identifies and excludes non-picklable attributes such as igraph objects,
+        complex decoder objects, and lazy-loaded managers. These will be reconstructed upon loading.
 
         Parameters
         ----------
@@ -998,26 +1026,79 @@ class ColorCode:
             The file path where the object should be saved.
         """
         data = self.__dict__.copy()
-        # Attributes to exclude from pickling
-        excluded_keys = [
-            "detectors_checks_map",
-            "qubit_groups",
-            "dems_decomposed",
-            "_bp_inputs",
+        
+        # Known non-picklable attributes based on modular architecture
+        known_non_picklable = [
+            # igraph objects
+            "tanner_graph",  # igraph.Graph
+            "qubit_groups",  # Dict[str, ig.VertexSeq]
+            
+            # Complex manager and decoder objects (lazy-loaded)
+            "_dem_manager",  # DemManager with igraph references
+            "_concat_matching_decoder",  # ConcatMatchingDecoder
+            "_bp_decoder",  # BPDecoder 
+            "_belief_concat_matching_decoder",  # BeliefConcatMatchingDecoder
+            "_simulator",  # Simulator
+            
+            # Cache that should be reconstructed
+            "_bp_inputs",  # Dictionary cache
         ]
-        for key in excluded_keys:
+        
+        # Test remaining attributes for picklability and get dynamic exclusions
+        temp_data = {k: v for k, v in data.items() if k not in known_non_picklable}
+        _, additional_non_picklable = self._test_remaining_attributes(temp_data)
+        
+        # Combine known and discovered non-picklable attributes
+        all_excluded = known_non_picklable + additional_non_picklable
+        
+        # Remove non-picklable attributes
+        for key in all_excluded:
             if key in data:
                 del data[key]
 
         with open(path, "wb") as f:
             pickle.dump(data, f)
+    
+    def _test_remaining_attributes(self, data_dict: dict) -> Tuple[List[str], List[str]]:
+        """
+        Test remaining attributes for picklability after excluding known non-picklable ones.
+        
+        Parameters
+        ----------
+        data_dict : dict
+            Dictionary of attributes to test
+            
+        Returns
+        -------
+        picklable : List[str]
+            List of attribute names that can be pickled
+        non_picklable : List[str]
+            List of attribute names that cannot be pickled
+        """
+        import pickle
+        import io
+        
+        picklable = []
+        non_picklable = []
+        
+        for attr_name, attr_value in data_dict.items():
+            try:
+                # Try to pickle the attribute
+                buffer = io.BytesIO()
+                pickle.dump(attr_value, buffer)
+                picklable.append(attr_name)
+            except Exception:
+                non_picklable.append(attr_name)
+        
+        return picklable, non_picklable
 
     @classmethod
     def load(cls, path: str) -> "ColorCode":
         """
         Load a ColorCode object from a file saved by the `save` method.
 
-        Reconstructs non-picklable attributes excluded during saving.
+        Reconstructs non-picklable attributes excluded during saving using the
+        modular architecture approach.
 
         Parameters
         ----------
@@ -1036,68 +1117,39 @@ class ColorCode:
         instance = cls.__new__(cls)
         instance.__dict__.update(data)
 
-        # Reconstruct non-picklable attributes
+        # Reconstruct non-picklable attributes in the correct order
         try:
-            instance._reconstruct_qubit_groups()
-            instance._reconstruct_detectors_checks_map()
-            instance._reconstruct_dems_decomposed()
-            instance._bp_inputs = {}  # Initialize empty cache
+            # Step 1: Reconstruct tanner_graph and qubit_groups
+            instance._reconstruct_tanner_graph_and_qubit_groups()
+            
+            # Step 2: Clear lazy-loaded object caches (they will be recreated on demand)
+            instance._dem_manager = None
+            instance._concat_matching_decoder = None
+            instance._bp_decoder = None  
+            instance._belief_concat_matching_decoder = None
+            instance._simulator = None
+            
+            # Step 3: Initialize cache
+            instance._bp_inputs = {}
+            
         except Exception as e:
             print(f"Error during reconstruction: {e}")
-            # Depending on desired behavior, you might re-raise or handle differently
             raise
 
         return instance
 
-    def _reconstruct_qubit_groups(self):
-        """Helper method to reconstruct the qubit_groups attribute after loading."""
-        tanner_graph = self.tanner_graph
-        data_qubits = tanner_graph.vs.select(pauli=None)
-        anc_qubits = tanner_graph.vs.select(pauli_ne=None)
-        anc_Z_qubits = anc_qubits.select(pauli="Z")
-        anc_X_qubits = anc_qubits.select(pauli="X")
-        anc_red_qubits = anc_qubits.select(color="r")
-        anc_green_qubits = anc_qubits.select(color="g")
-        anc_blue_qubits = anc_qubits.select(color="b")
+    def _reconstruct_tanner_graph_and_qubit_groups(self):
+        """
+        Reconstruct tanner_graph and qubit_groups using TannerGraphBuilder.
+        
+        This method recreates the igraph objects that cannot be pickled by using
+        the same TannerGraphBuilder that was used during initialization.
+        """
+        # Reconstruct using TannerGraphBuilder with saved parameters
+        graph_builder = TannerGraphBuilder(
+            circuit_type=self.circuit_type,
+            d=self.d,
+            d2=self.d2,
+        )
+        self.tanner_graph, self.qubit_groups = graph_builder.build()
 
-        self.qubit_groups = {
-            "data": data_qubits,
-            "anc": anc_qubits,
-            "anc_Z": anc_Z_qubits,
-            "anc_X": anc_X_qubits,
-            "anc_red": anc_red_qubits,
-            "anc_green": anc_green_qubits,
-            "anc_blue": anc_blue_qubits,
-        }
-
-    def _reconstruct_detectors_checks_map(self):
-        """Helper method to reconstruct the detectors_checks_map attribute after loading."""
-        (
-            detector_ids_by_color,
-            cult_detector_ids,
-            interface_detector_ids,
-            detectors_checks_map,
-        ) = self._generate_det_id_info()
-        # These attributes might have been loaded, update them if necessary
-        # or ensure consistency if they were *not* saved.
-        self.detector_ids_by_color = detector_ids_by_color
-        self.cult_detector_ids = cult_detector_ids
-        self.interface_detector_ids = interface_detector_ids
-        self.detectors_checks_map = detectors_checks_map
-
-    def _reconstruct_dems_decomposed(self):
-        """Helper method to reconstruct the dems_decomposed attribute after loading."""
-        self.dems_decomposed = {}
-        for c in ["r", "g", "b"]:
-            try:
-                # Assuming DemDecomp class is available in the scope
-                dem_decomp = DemDecomp(
-                    org_dem=self.dem_xz,
-                    color=c,
-                    remove_non_edge_like_errors=self.remove_non_edge_like_errors,
-                )
-                self.dems_decomposed[c] = dem_decomp
-            except Exception as e:
-                print(f"Error reconstructing DemDecomp for color {c}: {e}")
-                # Handle error as appropriate, maybe skip this color
-                pass
