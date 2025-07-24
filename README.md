@@ -19,13 +19,47 @@ The concatenated MWPM decoder is a decoder for color codes that functions by con
 By setting `comparative_decoding=True` (default is `False`) when defining a `ColorCode` object, the concatenated MWPM decoder can be executed multiple times over all distinct logical classes. The minimum-weight correction is chosen as the final correction, and the resulting **logical gap** quantifies its reliability, which can be used for post-selection. This feature was not discussed in our original [paper](https://doi.org/10.22331/q-2025-01-27-1609) but has been added for our following [paper](https://arxiv.org/abs/2409.07707) on color code magic state distillation.
 - **Easy Monte-Carlo simulation to evaluate the decoder performance.** <br>
 
+## Project Structure
+
+```
+color-code-stim/
+├── src/color_code_stim/          # Main package source
+│   ├── color_code.py             # Core ColorCode class & interface
+│   ├── circuit_builder.py        # Circuit generation
+│   ├── graph_builder.py          # Tanner graph construction
+│   ├── decoders/                 # Modular decoder implementations
+│   │   ├── base.py               # Base decoder interface
+│   │   ├── concat_matching_decoder.py  # Main concatenated MWPM decoder
+│   │   └── ...                   # Additional decoders
+│   ├── dem_utils/                # Detector error model utilities
+│   ├── simulation/               # Monte Carlo simulation tools
+│   ├── assets/                   # Pre-computed circuits & data
+│   └── ...                       # Utility modules
+└── ...
+```
+
+**Key Components**:
+- **ColorCode**: Main interface for circuit simulation & decoding
+- **CircuitBuilder**: Generates quantum circuits for different geometries
+- **TannerGraphBuilder**: Generates tanner graphs for different patch types
+- **Decoders**: Modular decoder architecture with MWPM implementation
+- **DemManager**: Manages detector error models
+- **Simulator**: Handles error sampling and Monte Carlo simulations
 
 ## Install
 
 Requires Python >= 3.11
 
+### For Users (Direct Install)
 ```bash
 pip install git+https://github.com/seokhyung-lee/color-code-stim.git
+```
+
+### For Development (Editable Install)
+```bash
+git clone https://github.com/seokhyung-lee/color-code-stim.git
+cd color-code-stim
+pip install -e .
 ```
 
 ## Usage
@@ -33,7 +67,7 @@ pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 See the [Getting Started Notebook](getting_started.ipynb).
 
 ## Citation
-If you want to cite this module in an academic work, please cite the [paper](https://doi.org/10.22331/q-2025-01-27-1609):
+If you want to cite this package in an academic work, please cite the [paper](https://doi.org/10.22331/q-2025-01-27-1609):
 
 ```bibtex
 @article{lee2025color,
@@ -52,7 +86,7 @@ If you want to cite this module in an academic work, please cite the [paper](htt
 ```
 
 ## License
-This module is distributed under the MIT license. Please see the LICENSE file for more details.
+This package is distributed under the MIT license. Please see the LICENSE file for more details.
 
 ## Acknowledgements
-This module is based upon work supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009 and by the Defense Advanced Research Projects Agency (DARPA) under Contract No. HR001122C0063.
+This package is based upon work supported by the Australian Research Council via the Centre of Excellence in Engineered Quantum Systems (EQUS) project number CE170100009 and by the Defense Advanced Research Projects Agency (DARPA) under Contract No. HR001122C0063.
