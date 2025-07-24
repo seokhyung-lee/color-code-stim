@@ -52,7 +52,7 @@ This hybrid approach balances simplicity with organization:
 
 ## Migration Phases
 
-### Phase 1: Circuit Building Extraction (Week 1-2)
+### Phase 1: Circuit Building Extraction (Done!)
 
 #### Objectives
 - Extract all circuit generation logic into dedicated module
@@ -511,16 +511,171 @@ This hybrid approach balances simplicity with organization:
 
 ## Testing Strategy
 
-### Test Levels
-1. **Unit Tests**: Test each module in isolation
-2. **Integration Tests**: Test module interactions
-3. **Regression Tests**: Ensure existing functionality preserved
-4. **Performance Tests**: Verify no performance degradation
+### Legacy-Based Equivalence Testing
+
+**Primary Testing Approach**: We use a dedicated `color_code_legacy.py` module containing the original implementation from the main branch as the ground truth for equivalence testing. This approach provides:
+
+- **Deterministic Comparisons**: Direct comparison without git/tox dependencies
+- **Fast Execution**: No build overhead or environment setup
+- **Comprehensive Coverage**: Easy testing of all parameter combinations  
+- **Reliable Results**: No flaky failures from environment differences
+- **Clear Debugging**: Side-by-side comparison with detailed failure messages
+
+### Comprehensive Test Structure
+
+The test suite is organized by migration phases with modular, expandable architecture:
+
+```
+tests/test_color_code_refactor/
+├── README.md                           # Comprehensive testing documentation
+├── __init__.py                         # Package initialization
+├── utils/                              # Test utilities and comparison functions
+│   ├── __init__.py
+│   └── comparison_utils.py             # Core comparison functions
+├── test_data/                          # Test parameters and data sets
+│   ├── __init__.py
+│   └── comprehensive_test_cases.py     # Comprehensive test parameter sets
+├── phase1_tests/                       # Circuit generation equivalence tests
+│   ├── __init__.py
+│   └── test_circuit_equivalence.py     # Phase 1: CircuitBuilder tests
+├── phase2_tests/                       # Tanner graph equivalence tests
+│   ├── __init__.py
+│   └── test_tanner_graph_equivalence.py # Phase 2: TannerGraphBuilder tests
+├── phase3_tests/                       # DEM equivalence tests (placeholder)
+│   ├── __init__.py
+│   └── test_dem_equivalence.py         # Phase 3: DEMManager tests (future)
+├── phase4_tests/                       # Decoder equivalence tests (placeholder)
+│   ├── __init__.py
+│   └── test_decoder_equivalence.py     # Phase 4: Decoder tests (future)
+├── phase5_tests/                       # Simulation equivalence tests (placeholder)
+│   ├── __init__.py
+│   └── test_simulation_equivalence.py  # Phase 5: Simulator tests (future)
+└── integration_tests/                  # Integration and performance tests
+    ├── __init__.py
+    ├── test_end_to_end_equivalence.py  # End-to-end integration tests
+    └── test_performance_benchmarks.py  # Performance regression tests
+```
+
+### Test Categories and Status
+
+#### Phase 1: Circuit Generation Equivalence ✅ **Implemented**
+- **Focus**: CircuitBuilder module vs legacy circuit generation
+- **Components**: Circuit structure, instruction sequences, DEM generation
+- **Coverage**: All circuit types (tri, rec, rec_stability, growing)
+- **Test Cases**: 7 quick validation cases, 100+ comprehensive parameter combinations
+
+#### Phase 2: Tanner Graph Construction Equivalence ✅ **Implemented**
+- **Focus**: TannerGraphBuilder module vs legacy graph construction
+- **Components**: Graph structure, vertex/edge attributes, qubit groups
+- **Coverage**: All patch types and coordinate systems
+- **Test Cases**: Complete parameter space with edge cases
+
+#### Phase 3-5: Future Implementation Placeholders 🚧 **Ready**
+- **Structure**: Complete test scaffolding with placeholder files
+- **Integration**: Ready for implementation as phases are completed
+- **Activation**: Remove `@pytest.mark.skip` decorators when phases are ready
+
+#### Integration Tests ✅ **Complete**
+- **End-to-End**: Cross-phase consistency validation
+- **Performance**: Timing and memory benchmarking with regression detection
+- **Statistical**: Performance comparison with tolerance thresholds
+
+### Test Utilities and Data Management
+
+#### Core Comparison Functions
+```python
+from tests.test_color_code_refactor.utils import (
+    create_test_instances,      # Create legacy & refactored instances
+    compare_circuits,           # Compare Stim circuits
+    compare_tanner_graphs,      # Compare igraph structures  
+    compare_qubit_groups,       # Compare qubit group mappings
+    compare_full_instances,     # Comprehensive comparison
+    assert_equivalence,         # Assert with detailed reporting
+    print_comparison_report     # Generate detailed reports
+)
+```
+
+#### Comprehensive Test Parameter Sets
+```python
+from tests.test_color_code_refactor.test_data import (
+    get_quick_test_suite,       # Quick validation test cases
+    get_comprehensive_test_suite, # Full parameter coverage
+    get_stress_test_cases,      # Large/complex parameters
+    get_edge_case_test_cases,   # Boundary conditions
+    get_test_case_name          # Descriptive test naming
+)
+```
+
+### Legacy Comparison Methodology
+
+#### Basic Equivalence Testing
+```python
+def test_phase1_circuit_equivalence():
+    """Compare circuit generation between legacy and refactored implementations."""
+    from src.color_code_stim.color_code_legacy import ColorCode as LegacyColorCode
+    from src.color_code_stim.color_code import ColorCode as RefactoredColorCode
+    
+    # Test all quick validation cases
+    for test_params in get_quick_test_suite():
+        legacy, refactored = create_test_instances(test_params)
+        
+        # Compare circuit structure
+        circuit_result = compare_circuits(legacy.circuit, refactored.circuit)
+        
+        # Validate equivalence with detailed reporting
+        assert_equivalence([circuit_result], get_test_case_name(test_params))
+```
+
+#### Comprehensive Parameter Testing
+```python
+def test_phase2_comprehensive_graph_equivalence():
+    """Comprehensive tanner graph equivalence testing."""
+    comprehensive_suite = get_comprehensive_test_suite()
+    
+    for category, test_cases in comprehensive_suite.items():
+        for test_params in test_cases:
+            legacy, refactored = create_test_instances(test_params)
+            
+            # Multi-component comparison
+            graph_result = compare_tanner_graphs(legacy.tanner_graph, refactored.tanner_graph)
+            groups_result = compare_qubit_groups(legacy.qubit_groups, refactored.qubit_groups)
+            
+            # Combined validation
+            assert_equivalence([graph_result, groups_result], get_test_case_name(test_params))
+```
+
+### Quality Assurance Framework
+
+#### Validation Standards
+- ✅ **100% Functional Equivalence** for Phases 1-2
+- ✅ **Comprehensive Parameter Coverage** with 100+ test cases
+- ✅ **Performance Validation** with <15% regression tolerance
+- ✅ **Detailed Failure Reporting** for debugging
+
+#### Test Execution Commands
+```bash
+# Run all Phase 1 tests
+pytest tests/test_color_code_refactor/phase1_tests/ -v
+
+# Run all Phase 2 tests  
+pytest tests/test_color_code_refactor/phase2_tests/ -v
+
+# Run quick validation tests
+pytest tests/test_color_code_refactor/phase1_tests/test_circuit_equivalence.py::TestPhase1CircuitEquivalence::test_quick_circuit_equivalence -v
+
+# Run integration tests
+pytest tests/test_color_code_refactor/integration_tests/ -v
+
+# Run performance benchmarks
+pytest tests/test_color_code_refactor/integration_tests/test_performance_benchmarks.py -v
+```
 
 ### Test Coverage Goals
-- Maintain or improve current coverage
-- 100% coverage for critical paths
-- Edge case testing for each module
+- **Legacy Equivalence**: 100% functional equivalence for all supported parameter combinations
+- **Phase Coverage**: Phases 1-2 fully validated, Phases 3-5 scaffolded and ready
+- **Integration**: 100% coverage for cross-phase consistency and performance
+- **Edge Cases**: Comprehensive boundary condition and stress testing
+- **Expandability**: Modular structure ready for future phase implementation
 
 ## Risk Mitigation
 

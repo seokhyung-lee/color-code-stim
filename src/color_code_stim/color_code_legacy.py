@@ -23,9 +23,6 @@ import stim
 from scipy.sparse import csc_matrix, csr_matrix
 from statsmodels.stats.proportion import proportion_confint
 
-from .circuit_builder import CircuitBuilder
-from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_to_color_val, color_val_to_color
-from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit, _reformat_cultivation_circuit
 from .dem_decomp import DemDecomp
 from .stim_utils import (
@@ -35,6 +32,9 @@ from .stim_utils import (
 )
 from .utils import _get_final_predictions, get_pfail, get_project_folder, timeit
 from .visualization import draw_lattice, draw_tanner_graph
+
+PAULI_LABEL = Literal["X", "Y", "Z"]
+COLOR_LABEL = Literal["r", "g", "b"]
 
 
 class ColorCode:
@@ -190,8 +190,10 @@ class ColorCode:
             is given, it is prioritized over `circuit_type`.
         """
         if isinstance(cnot_schedule, str):
-            if cnot_schedule in CNOT_SCHEDULES:
-                cnot_schedule = CNOT_SCHEDULES[cnot_schedule]
+            if cnot_schedule in ["tri_optimal", "LLB"]:
+                cnot_schedule = [2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2]
+            elif cnot_schedule == "tri_optimal_reversed":
+                cnot_schedule = [3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1]
             else:
                 raise ValueError(f"Invalid cnot schedule: {cnot_schedule}")
         else:
@@ -294,33 +296,18 @@ class ColorCode:
             cultivation_circuit = None
         self.cultivation_circuit = cultivation_circuit
 
+        self.tanner_graph = ig.Graph()
+
         self._benchmarking = _benchmarking
 
-        # Build Tanner graph using TannerGraphBuilder
-        graph_builder = TannerGraphBuilder(
-            circuit_type=self.circuit_type,
-            d=self.d,
-            d2=self.d2,
-        )
-        self.tanner_graph, self.qubit_groups = graph_builder.build()
+        # Various qubit groups predefined for efficiency
+        self.qubit_groups = {}
 
-        # Generate circuit using CircuitBuilder
-        builder = CircuitBuilder(
-            d=self.d,
-            d2=self.d2,
-            rounds=self.rounds,
-            circuit_type=self.circuit_type,
-            cnot_schedule=self.cnot_schedule,
-            temp_bdry_type=self.temp_bdry_type,
-            physical_probs=self.physical_probs,
-            perfect_init_final=self.perfect_init_final,
-            tanner_graph=self.tanner_graph,
-            qubit_groups=self.qubit_groups,
-            exclude_non_essential_pauli_detectors=self.exclude_non_essential_pauli_detectors,
-            cultivation_circuit=self.cultivation_circuit,
-            comparative_decoding=self.comparative_decoding,
-        )
-        self.circuit = builder.build()
+        tanner_graph = self.tanner_graph
+
+        self._create_tanner_graph()
+
+        self.circuit = self._generate_circuit()
 
         (
             detector_ids_by_color,
@@ -377,13 +364,309 @@ class ColorCode:
             pauli = "Z"
         else:
             raise ValueError(f"Invalid pauli: {pauli}")
-        color = color_val_to_color(coords[4])
+        color = self.color_val_to_color(coords[4])
 
         return pauli, color
 
     def get_observable_pauli(self, observable_id: int) -> PAULI_LABEL:
         return self.obs_paulis[observable_id]
 
+    @timeit
+    def _create_tanner_graph(self) -> None:
+        """Construct the Tanner graph for the chosen circuit type."""
+
+        circuit_type = self.circuit_type
+        tanner_graph = self.tanner_graph
+
+        if circuit_type in {"tri", "growing", "cult+growing"}:
+            if circuit_type == "tri":
+                d = self.d
+            else:
+                d = self.d2
+
+            assert d % 2 == 1
+
+            detid = 0
+            L = round(3 * (d - 1) / 2)
+            for y in range(L + 1):
+                if y % 3 == 0:
+                    anc_qubit_color = "g"
+                    anc_qubit_pos = 2
+                elif y % 3 == 1:
+                    anc_qubit_color = "b"
+                    anc_qubit_pos = 0
+                else:
+                    anc_qubit_color = "r"
+                    anc_qubit_pos = 1
+
+                for x in range(2 * y, 4 * L - 2 * y + 1, 4):
+                    boundary = []
+                    if y == 0:
+                        boundary.append("r")
+                    if x == 2 * y:
+                        boundary.append("g")
+                    if x == 4 * L - 2 * y:
+                        boundary.append("b")
+                    boundary = "".join(boundary)
+                    if not boundary:
+                        boundary = None
+
+                    if circuit_type in {"tri"}:
+                        obs = boundary in ["r", "rg", "rb"]
+                    elif circuit_type in {"growing", "cult+growing"}:
+                        obs = boundary in ["g", "gb", "rg"]
+                    else:
+                        obs = False
+
+                    if round((x / 2 - y) / 2) % 3 != anc_qubit_pos:
+                        tanner_graph.add_vertex(
+                            name=f"{x}-{y}",
+                            x=x,
+                            y=y,
+                            qid=tanner_graph.vcount(),
+                            pauli=None,
+                            color=None,
+                            obs=obs,
+                            boundary=boundary,
+                        )
+                    else:
+                        for pauli in ["Z", "X"]:
+                            tanner_graph.add_vertex(
+                                name=f"{x}-{y}-{pauli}",
+                                x=x,
+                                y=y,
+                                qid=tanner_graph.vcount(),
+                                pauli=pauli,
+                                color=anc_qubit_color,
+                                obs=False,
+                                boundary=boundary,
+                            )
+                            detid += 1
+
+        elif circuit_type == "rec":
+            d, d2 = self.d, self.d2
+            assert d % 2 == 0
+            assert d2 % 2 == 0
+
+            detid = 0
+            L1 = round(3 * d / 2 - 2)
+            L2 = round(3 * d2 / 2 - 2)
+            for y in range(L2 + 1):
+                if y % 3 == 0:
+                    anc_qubit_color = "g"
+                    anc_qubit_pos = 2
+                elif y % 3 == 1:
+                    anc_qubit_color = "b"
+                    anc_qubit_pos = 0
+                else:
+                    anc_qubit_color = "r"
+                    anc_qubit_pos = 1
+
+                for x in range(2 * y, 2 * y + 4 * L1 + 1, 4):
+                    boundary = []
+                    if y == 0 or y == L2:
+                        boundary.append("r")
+                    if 2 * y == x or 2 * y == x - 4 * L1:
+                        boundary.append("g")
+                    boundary = "".join(boundary)
+                    if not boundary:
+                        boundary = None
+
+                    if round((x / 2 - y) / 2) % 3 != anc_qubit_pos:
+                        obs_g = y == 0
+                        obs_r = x == 2 * y + 4 * L1
+
+                        tanner_graph.add_vertex(
+                            name=f"{x}-{y}",
+                            x=x,
+                            y=y,
+                            qid=tanner_graph.vcount(),
+                            pauli=None,
+                            color=None,
+                            obs_r=obs_r,
+                            obs_g=obs_g,
+                            boundary=boundary,
+                        )
+                    else:
+                        for pauli in ["Z", "X"]:
+                            tanner_graph.add_vertex(
+                                name=f"{x}-{y}-{pauli}",
+                                x=x,
+                                y=y,
+                                qid=tanner_graph.vcount(),
+                                pauli=pauli,
+                                color=anc_qubit_color,
+                                obs_r=False,
+                                obs_g=False,
+                                boundary=boundary,
+                            )
+                            detid += 1
+
+            # Additional corner vertex
+            x = 2 * L2 + 2
+            y = L2 + 1
+            # x, y = L2 - 2, L2
+            tanner_graph.add_vertex(
+                name=f"{x}-{y}",
+                x=x,
+                y=y,
+                qid=tanner_graph.vcount(),
+                pauli=None,
+                color=None,
+                obs_r=False,
+                obs_g=False,
+                boundary="rg",
+            )
+
+        elif circuit_type == "rec_stability":
+            d = self.d
+            d2 = self.d2
+            assert d % 2 == 0
+            assert d2 % 2 == 0
+
+            detid = 0
+            L1 = round(3 * d / 2 - 2)
+            L2 = round(3 * d2 / 2 - 2)
+            for y in range(L2 + 1):
+                if y % 3 == 0:
+                    anc_qubit_color = "r"
+                    anc_qubit_pos = 0
+                elif y % 3 == 1:
+                    anc_qubit_color = "b"
+                    anc_qubit_pos = 1
+                else:
+                    anc_qubit_color = "g"
+                    anc_qubit_pos = 2
+
+                if y == 0:
+                    x_init_adj = 8
+                elif y == 1:
+                    x_init_adj = 4
+                else:
+                    x_init_adj = 0
+
+                if y == L2:
+                    x_fin_adj = 8
+                elif y == L2 - 1:
+                    x_fin_adj = 4
+                else:
+                    x_fin_adj = 0
+
+                for x in range(2 * y + x_init_adj, 2 * y + 4 * L1 + 1 - x_fin_adj, 4):
+                    if (
+                        y == 0
+                        or y == L2
+                        or x == y * 2
+                        or x == 2 * y + 4 * L1
+                        or (x, y) == (6, 1)
+                        or (x, y) == (2 * L2 + 4 * L1 - 6, L2 - 1)
+                    ):
+                        boundary = "g"
+                    else:
+                        boundary = None
+
+                    if round((x / 2 - y) / 2) % 3 != anc_qubit_pos:
+                        tanner_graph.add_vertex(
+                            name=f"{x}-{y}",
+                            x=x,
+                            y=y,
+                            qid=tanner_graph.vcount(),
+                            pauli=None,
+                            color=None,
+                            boundary=boundary,
+                        )
+                    else:
+                        for pauli in ["Z", "X"]:
+                            tanner_graph.add_vertex(
+                                name=f"{x}-{y}-{pauli}",
+                                x=x,
+                                y=y,
+                                qid=tanner_graph.vcount(),
+                                pauli=pauli,
+                                color=anc_qubit_color,
+                                boundary=boundary,
+                            )
+                            detid += 1
+
+        else:
+            raise ValueError(f"Invalid circuit type: {circuit_type}")
+
+        # Update qubit_groups
+        data_qubits = tanner_graph.vs.select(pauli=None)
+        anc_qubits = tanner_graph.vs.select(pauli_ne=None)
+        anc_Z_qubits = anc_qubits.select(pauli="Z")
+        anc_X_qubits = anc_qubits.select(pauli="X")
+        anc_red_qubits = anc_qubits.select(color="r")
+        anc_green_qubits = anc_qubits.select(color="g")
+        anc_blue_qubits = anc_qubits.select(color="b")
+
+        self.qubit_groups.update(
+            {
+                "data": data_qubits,
+                "anc": anc_qubits,
+                "anc_Z": anc_Z_qubits,
+                "anc_X": anc_X_qubits,
+                "anc_red": anc_red_qubits,
+                "anc_green": anc_green_qubits,
+                "anc_blue": anc_blue_qubits,
+            }
+        )
+
+        # Add edges
+        links = []
+        offsets = [(-2, 1), (2, 1), (4, 0), (2, -1), (-2, -1), (-4, 0)]
+        for anc_qubit in self.qubit_groups["anc"]:
+            data_qubits = []
+            for offset in offsets:
+                data_qubit_x = anc_qubit["x"] + offset[0]
+                data_qubit_y = anc_qubit["y"] + offset[1]
+                data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
+                try:
+                    data_qubit = tanner_graph.vs.find(name=data_qubit_name)
+                except ValueError:
+                    continue
+                data_qubits.append(data_qubit)
+                tanner_graph.add_edge(anc_qubit, data_qubit, kind="tanner", color=None)
+
+            if anc_qubit["pauli"] == "Z":
+                weight = len(data_qubits)
+                for i in range(weight):
+                    qubit = data_qubits[i]
+                    next_qubit = data_qubits[(i + 1) % weight]
+                    if not tanner_graph.are_connected(qubit, next_qubit):
+                        link = tanner_graph.add_edge(
+                            qubit, next_qubit, kind="lattice", color=None
+                        )
+                        links.append(link)
+
+        # Assign colors to links
+        link: ig.Edge
+        for link in links:
+            v1: ig.Vertex
+            v2: ig.Vertex
+            v1, v2 = link.target_vertex, link.source_vertex
+            ngh_ancs_1 = {anc.index for anc in v1.neighbors() if anc["pauli"] == "Z"}
+            ngh_ancs_2 = {anc.index for anc in v2.neighbors() if anc["pauli"] == "Z"}
+            color = tanner_graph.vs[(ngh_ancs_1 ^ ngh_ancs_2).pop()]["color"]
+            link["color"] = color
+
+    @staticmethod
+    def get_qubit_coords(qubit: ig.Vertex) -> Tuple[int, int]:
+        coords = [qubit["x"], qubit["y"]]
+        # if qubit["pauli"] == "Z":
+        #     coords[0] -= 1
+        # elif qubit["pauli"] == "X":
+        #     coords[0] += 1
+
+        return tuple(coords)
+
+    @staticmethod
+    def color_to_color_val(color: Literal["r", "g", "b"]) -> int:
+        return {"r": 0, "g": 1, "b": 2}[color]
+
+    @staticmethod
+    def color_val_to_color(color_val: Literal[0, 1, 2]) -> Literal["r", "g", "b"]:
+        return {0: "r", 1: "g", 2: "b"}[color_val]
 
     def get_decomposed_dems(
         self, color: COLOR_LABEL
@@ -392,6 +675,574 @@ class ColorCode:
         dem2 = self.dems_decomposed[color][1].copy()
         return dem1, dem2
 
+    @timeit
+    def _generate_circuit(self) -> stim.Circuit:
+        qubit_groups = self.qubit_groups
+        cnot_schedule = self.cnot_schedule
+        tanner_graph = self.tanner_graph
+        rounds = self.rounds
+        circuit_type = self.circuit_type
+        d = self.d
+        d2 = self.d2
+        temp_bdry_type = self.temp_bdry_type
+        probs = self.physical_probs
+        p_bitflip = probs["bitflip"]
+        p_reset = probs["reset"]
+        p_meas = probs["meas"]
+        p_cnot = probs["cnot"]
+        p_idle = probs["idle"]
+
+        perfect_init_final = self.perfect_init_final
+        use_last_detectors = True
+
+        data_qubits = qubit_groups["data"]
+        anc_qubits = qubit_groups["anc"]
+        anc_Z_qubits = qubit_groups["anc_Z"]
+        anc_X_qubits = qubit_groups["anc_X"]
+
+        data_qids = data_qubits["qid"]
+        anc_qids = anc_qubits["qid"]
+        anc_Z_qids = anc_Z_qubits["qid"]
+        anc_X_qids = anc_X_qubits["qid"]
+
+        num_data_qubits = len(data_qids)
+        num_anc_Z_qubits = len(anc_Z_qubits)
+        num_anc_X_qubits = len(anc_X_qubits)
+        num_anc_qubits = num_anc_X_qubits + num_anc_Z_qubits
+
+        num_qubits = tanner_graph.vcount()
+        all_qids = list(range(num_qubits))
+        all_qids_set = set(all_qids)
+
+        exclude_non_essential_pauli_detectors = (
+            self.exclude_non_essential_pauli_detectors
+        )
+
+        if circuit_type == "rec_stability":
+            red_links = [
+                [link.source, link.target] for link in tanner_graph.es.select(color="r")
+            ]
+            red_links = np.array(red_links)
+            data_q1s = red_links[:, 0]
+            data_q2s = red_links[:, 1]
+        elif circuit_type in {"tri", "rec"}:
+            red_links = data_q1s = data_q2s = None
+        elif circuit_type in {"growing", "cult+growing"}:
+            x_offset_init_patch = 6 * round((d2 - d) / 2)
+            y_offset_init_patch = 3 * round((d2 - d) / 2)
+            data_qubits_outside_init_patch = data_qubits.select(
+                y_lt=y_offset_init_patch
+            )
+            red_links = [
+                [link.source, link.target]
+                for link in tanner_graph.es.select(
+                    color="r",
+                    _within=data_qubits_outside_init_patch,
+                )
+            ]
+            red_links = np.array(red_links)
+            data_q1s = red_links[:, 0]
+            data_q2s = red_links[:, 1]
+        else:
+            raise NotImplementedError
+
+        # Main circuit
+        circuit = stim.Circuit()
+        for qubit in tanner_graph.vs:
+            coords = self.get_qubit_coords(qubit)
+            circuit.append("QUBIT_COORDS", qubit.index, coords)
+
+        if circuit_type == "cult+growing":
+            qubit_coords = {}
+            for qubit in tanner_graph.vs:
+                coords = self.get_qubit_coords(qubit)
+                qubit_coords[qubit.index] = coords
+            cult_circuit, interface_detectors_info = _reformat_cultivation_circuit(
+                self.cultivation_circuit,
+                self.d,
+                qubit_coords,
+                x_offset=x_offset_init_patch,
+                y_offset=y_offset_init_patch,
+            )
+            circuit += cult_circuit
+
+        # Syndrome extraction circuit without SPAM
+        synd_extr_circuit_without_spam = stim.Circuit()
+        for timeslice in range(1, max(cnot_schedule) + 1):
+            targets = [i for i, val in enumerate(cnot_schedule) if val == timeslice]
+            operated_qids = set()
+
+            CX_targets = []
+            for target in targets:
+                if target in {0, 6}:
+                    offset = (-2, 1)
+                elif target in {1, 7}:
+                    offset = (2, 1)
+                elif target in {2, 8}:
+                    offset = (4, 0)
+                elif target in {3, 9}:
+                    offset = (2, -1)
+                elif target in {4, 10}:
+                    offset = (-2, -1)
+                else:
+                    offset = (-4, 0)
+
+                target_anc_qubits = anc_Z_qubits if target < 6 else anc_X_qubits
+                for anc_Z_qubit in target_anc_qubits:
+                    data_qubit_x = anc_Z_qubit["x"] + offset[0]
+                    data_qubit_y = anc_Z_qubit["y"] + offset[1]
+                    data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
+                    try:
+                        data_qubit = tanner_graph.vs.find(name=data_qubit_name)
+                    except ValueError:
+                        continue
+                    anc_qid = anc_Z_qubit.index
+                    data_qid = data_qubit.index
+                    operated_qids.update({anc_qid, data_qid})
+
+                    CX_target = (
+                        [data_qid, anc_qid] if target < 6 else [anc_qid, data_qid]
+                    )
+                    CX_targets.extend(CX_target)
+
+            synd_extr_circuit_without_spam.append("CX", CX_targets)
+            if p_cnot > 0:
+                synd_extr_circuit_without_spam.append("DEPOLARIZE2", CX_targets, p_cnot)
+
+            if p_idle > 0:
+                idling_qids = list(all_qids_set - operated_qids)
+                synd_extr_circuit_without_spam.append(
+                    "DEPOLARIZE1", idling_qids, p_idle
+                )
+
+            synd_extr_circuit_without_spam.append("TICK")
+
+        # Syndrome extraction circuit with measurement & detector
+        synd_extr_circuits = []
+        obs_included_lookbacks = set()
+        for first in [True, False]:
+            synd_extr_circuit = synd_extr_circuit_without_spam.copy()
+
+            if p_bitflip > 0:
+                synd_extr_circuit.insert(
+                    0, stim.CircuitInstruction("X_ERROR", data_qids, [p_bitflip])
+                )
+
+            synd_extr_circuit.append("MRZ", anc_Z_qids, p_meas)
+            synd_extr_circuit.append("MRX", anc_X_qids, p_meas)
+
+            ## If first is True:
+            # tri/rec: detectors have the same type as the temporal boundary
+            # rec_stability: X- and Z-type detectors exist except for red faces
+            # growing: same as tri/rec if anc_qubit['y'] >= y_offset_init_patch,
+            #          same as rec_stability otherwise.
+            # cult+growing: X- and Z-type detectors exist if anc_qubit['y'] >= y_offset_init_patch,
+            #               same as rec_stability otherwise.
+
+            ## Z- and X-type detectors
+            for pauli in ["Z", "X"]:
+                if exclude_non_essential_pauli_detectors:
+                    if temp_bdry_type in {"X", "Z"} and pauli != temp_bdry_type:
+                        continue
+
+                anc_qubits_now = anc_Z_qubits if pauli == "Z" else anc_X_qubits
+                init_lookback = -num_anc_qubits if pauli == "Z" else -num_anc_X_qubits
+
+                for j, anc_qubit in enumerate(anc_qubits_now):
+                    anc_qubit: ig.Vertex
+                    pauli_val = 0 if pauli == "X" else 2
+                    color = anc_qubit["color"]
+                    color_val = self.color_to_color_val(color)
+                    coords = self.get_qubit_coords(anc_qubit)
+                    det_coords = coords + (0, pauli_val, color_val)
+
+                    if not first:
+                        lookback = init_lookback + j
+                        targets = [
+                            stim.target_rec(lookback),
+                            stim.target_rec(lookback - num_anc_qubits),
+                        ]
+                        synd_extr_circuit.append("DETECTOR", targets, det_coords)
+
+                    else:
+                        if circuit_type in {"tri", "rec"}:
+                            detector_exists = temp_bdry_type == pauli
+                        elif circuit_type == "rec_stability":
+                            detector_exists = color != "r"
+                        elif circuit_type == "growing":
+                            if coords[1] >= y_offset_init_patch:
+                                detector_exists = temp_bdry_type == pauli
+                            else:
+                                detector_exists = color != "r"
+                        elif circuit_type == "cult+growing":
+                            detector_exists = (
+                                coords[1] >= y_offset_init_patch or color != "r"
+                            )
+                        else:
+                            raise NotImplementedError
+
+                        if detector_exists:
+                            targets = [stim.target_rec(init_lookback + j)]
+
+                            # For cult+growing, need to add targets during cultivation
+                            # if anc_qubit is inside the initial patch.
+                            if (
+                                circuit_type == "cult+growing"
+                                and coords[1] >= y_offset_init_patch
+                            ):
+                                # Add detector targets during cultivation
+                                det_coords += (-1,)
+                                adj_data_qubits = frozenset(
+                                    qubit.index
+                                    for qubit in anc_qubit.neighbors()
+                                    if qubit["y"] >= y_offset_init_patch - 1e-6
+                                )
+                                paulis = [pauli]
+                                if pauli == "X":
+                                    paulis.append("Z")
+                                    det_coords = list(det_coords)
+                                    det_coords[3] = 1
+                                    det_coords = tuple(det_coords)
+
+                                    anc_Z_name = f"{coords[0]}-{coords[1]}-Z"
+                                    anc_Z_qid = tanner_graph.vs.find(
+                                        name=anc_Z_name
+                                    ).index
+                                    j_Z = anc_Z_qids.index(anc_Z_qid)
+                                    targets.append(
+                                        stim.target_rec(-num_anc_qubits + j_Z)
+                                    )
+
+                                targets_cult_all = []
+                                lookbacks = []
+                                for pauli_now in paulis:
+                                    key = (pauli_now, adj_data_qubits)
+                                    targets_cult = interface_detectors_info[key]
+                                    lookbacks.extend(targets_cult)
+                                    targets_cult = [
+                                        stim.target_rec(-num_anc_qubits + cult_lookback)
+                                        for cult_lookback in targets_cult
+                                    ]
+                                    targets_cult_all.extend(targets_cult)
+                                targets.extend(targets_cult_all)
+
+                                if pauli == "X" and color == "g":
+                                    obs_included_lookbacks ^= set(lookbacks)
+
+                            # Add detector
+                            synd_extr_circuit.append("DETECTOR", targets, det_coords)
+
+            ## Y-type detectors
+            if first and temp_bdry_type == "Y" and circuit_type != "cult+growing":
+                for j_Z, anc_qubit_Z in enumerate(anc_Z_qubits):
+                    anc_qubit_Z: ig.Vertex
+                    color = anc_qubit_Z["color"]
+                    coords = self.get_qubit_coords(anc_qubit_Z)
+
+                    if circuit_type in {"tri", "rec"}:
+                        detector_exists = True
+                    elif circuit_type == "rec_stability":
+                        detector_exists = color != "r"
+                    elif circuit_type == "growing":
+                        detector_exists = coords[1] >= y_offset_init_patch
+                    else:
+                        raise NotImplementedError
+
+                    if detector_exists:
+                        j_X = anc_X_qubits["name"].index(
+                            f"{anc_qubit_Z['x']}-{anc_qubit_Z['y']}-X"
+                        )
+                        det_coords = coords + (0, 1, self.color_to_color_val(color))
+                        targets = [
+                            stim.target_rec(-num_anc_qubits + j_Z),
+                            stim.target_rec(-num_anc_X_qubits + j_X),
+                        ]
+                        synd_extr_circuit.append("DETECTOR", targets, det_coords)
+
+            if p_reset > 0:
+                synd_extr_circuit.append("X_ERROR", anc_Z_qids, p_reset)
+                synd_extr_circuit.append("Z_ERROR", anc_X_qids, p_reset)
+            if p_idle > 0:
+                synd_extr_circuit.append("DEPOLARIZE1", data_qids, p_idle)
+
+            # if custom_noise_channel is not None:
+            #     synd_extr_circuit.append(custom_noise_channel[0],
+            #                              data_qids,
+            #                              custom_noise_channel[1])
+
+            synd_extr_circuit.append("TICK")
+            synd_extr_circuit.append("SHIFT_COORDS", (), (0, 0, 1))
+
+            synd_extr_circuits.append(synd_extr_circuit)
+
+        # Initialize qubits
+        if temp_bdry_type in {"X", "Y", "Z"} and circuit_type not in {
+            "growing",
+            "cult+growing",
+        }:
+            circuit.append(f"R{temp_bdry_type}", data_qids)
+            if p_reset > 0 and not perfect_init_final:
+                error_type = "Z_ERROR" if temp_bdry_type == "X" else "X_ERROR"
+                circuit.append(error_type, data_qids, p_reset)
+
+        elif temp_bdry_type == "r":
+            circuit.append("RX", data_q1s)
+            circuit.append("RZ", data_q2s)
+            if p_reset > 0 and not perfect_init_final:
+                circuit.append("Z_ERROR", data_q1s, p_reset)
+                circuit.append("X_ERROR", data_q2s, p_reset)
+
+            circuit.append("TICK")
+
+            circuit.append("CX", red_links.ravel())
+            if p_cnot > 0:
+                circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
+
+        elif circuit_type == "growing":
+            # Data qubits inside the initial patch
+            data_qids_init_patch = data_qubits.select(y_ge=y_offset_init_patch)["qid"]
+            circuit.append(f"R{temp_bdry_type}", data_qids_init_patch)
+            if p_reset > 0 and not perfect_init_final:
+                error_type = "Z_ERROR" if temp_bdry_type == "X" else "X_ERROR"
+                circuit.append(error_type, data_qids_init_patch, p_reset)
+
+            # Data qubits outside the initial patch
+            circuit.append("RX", data_q1s)
+            circuit.append("RZ", data_q2s)
+            if p_reset > 0:
+                circuit.append("Z_ERROR", data_q1s, p_reset)
+                circuit.append("X_ERROR", data_q2s, p_reset)
+
+            circuit.append("TICK")
+
+            circuit.append("CX", red_links.ravel())
+            if p_cnot > 0:
+                circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
+
+        elif circuit_type == "cult+growing":
+            # Find last tick position
+            for i in range(len(circuit) - 1, -1, -1):
+                instruction = circuit[i]
+                if (
+                    isinstance(instruction, stim.CircuitInstruction)
+                    and instruction.name == "TICK"
+                ):
+                    last_tick_pos = i
+                    break
+
+            # Data qubits outside the initial patch (inserted before the last tick)
+            circuit.insert(last_tick_pos, stim.CircuitInstruction("RX", data_q1s))
+            circuit.insert(last_tick_pos + 1, stim.CircuitInstruction("RZ", data_q2s))
+            if p_reset > 0:
+                circuit.insert(
+                    last_tick_pos + 2,
+                    stim.CircuitInstruction("Z_ERROR", data_q1s, [p_reset]),
+                )
+                circuit.insert(
+                    last_tick_pos + 3,
+                    stim.CircuitInstruction("X_ERROR", data_q2s, [p_reset]),
+                )
+
+            # CX gate (inserted after the last tick)
+            circuit.append("CX", red_links.ravel())
+            if p_cnot > 0:
+                circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
+
+        else:
+            raise NotImplementedError
+
+        circuit.append("RZ", anc_Z_qids)
+        circuit.append("RX", anc_X_qids)
+
+        if p_reset > 0:
+            circuit.append("X_ERROR", anc_Z_qids, p_reset)
+            circuit.append("Z_ERROR", anc_X_qids, p_reset)
+
+        # if p_bitflip > 0:
+        #     circuit.append("X_ERROR", data_qids, p_bitflip)
+
+        # if custom_noise_channel is not None:
+        #     circuit.append(custom_noise_channel[0],
+        #                    data_qids,
+        #                    custom_noise_channel[1])
+
+        circuit.append("TICK")
+
+        circuit += synd_extr_circuits[0]
+        circuit += synd_extr_circuits[1] * (rounds - 1)
+
+        # Final data qubit measurements (& observables for red boundaries)
+        p_meas_final = 0 if perfect_init_final else p_meas
+        if temp_bdry_type in {"X", "Y", "Z"}:
+            circuit.append(f"M{temp_bdry_type}", data_qids, p_meas_final)
+            if use_last_detectors:
+                if temp_bdry_type == "X":
+                    anc_qubits_now = anc_X_qubits
+                    init_lookback = -num_data_qubits - num_anc_X_qubits
+                    pauli_val = 0
+                else:
+                    anc_qubits_now = anc_Z_qubits
+                    init_lookback = -num_data_qubits - num_anc_qubits
+                    pauli_val = 2 if temp_bdry_type == "Z" else 1
+
+                for j_anc, anc_qubit in enumerate(anc_qubits_now):
+                    anc_qubit: ig.Vertex
+                    ngh_data_qubits = anc_qubit.neighbors()
+                    lookback_inds = [
+                        -num_data_qubits + data_qids.index(q.index)
+                        for q in ngh_data_qubits
+                    ]
+                    lookback_inds.append(init_lookback + j_anc)
+                    if temp_bdry_type == "Y":
+                        anc_X_qubit = tanner_graph.vs.find(
+                            name=f"{anc_qubit['x']}-{anc_qubit['y']}-X"
+                        )
+                        j_anc_X = anc_X_qids.index(anc_X_qubit.index)
+                        lookback_inds.append(
+                            -num_data_qubits - num_anc_X_qubits + j_anc_X
+                        )
+                    target = [stim.target_rec(ind) for ind in lookback_inds]
+                    color_val = self.color_to_color_val(anc_qubit["color"])
+                    coords = self.get_qubit_coords(anc_qubit) + (
+                        0,
+                        pauli_val,
+                        color_val,
+                    )
+                    circuit.append("DETECTOR", target, coords)
+
+        elif temp_bdry_type == "r":
+            if not use_last_detectors:
+                raise NotImplementedError
+
+            circuit.append("CX", red_links.ravel())
+            if p_cnot > 0 and not perfect_init_final:
+                circuit.append("DEPOLARIZE2", red_links.ravel(), p_cnot)
+
+            circuit.append("TICK")
+
+            circuit.append("MZ", data_q2s, p_meas_final)  # ZZ measurement outcomes
+
+            num_data_q2s = data_q2s.size
+            lookback_inds_anc = {}
+            for j, data_q2 in enumerate(data_q2s):
+                for anc_Z_qubit in tanner_graph.vs[data_q2].neighbors():
+                    if anc_Z_qubit["pauli"] == "Z" and anc_Z_qubit["color"] != "r":
+                        anc_Z_qid = anc_Z_qubit.index
+                        lookback_ind = j - num_data_q2s
+                        try:
+                            lookback_inds_anc[anc_Z_qid].append(lookback_ind)
+                        except KeyError:
+                            lookback_inds_anc[anc_Z_qid] = [lookback_ind]
+
+            obs_Z_lookback_inds = []
+            for j_anc_Z, anc_Z_qubit in enumerate(anc_Z_qubits):
+                check_meas_lookback_ind = j_anc_Z - num_data_q2s - num_anc_qubits
+                if anc_Z_qubit["color"] != "g":
+                    obs_Z_lookback_inds.append(check_meas_lookback_ind)
+                try:
+                    lookback_inds = lookback_inds_anc[anc_Z_qubit.index]
+                except KeyError:
+                    continue
+                lookback_inds.append(check_meas_lookback_ind)
+                target = [stim.target_rec(ind) for ind in lookback_inds]
+                color_val = self.color_to_color_val(anc_Z_qubit["color"])
+                coords = self.get_qubit_coords(anc_Z_qubit) + (0, 2, color_val)
+                circuit.append("DETECTOR", target, coords)
+
+            target = [stim.target_rec(ind) for ind in obs_Z_lookback_inds]
+            circuit.append("OBSERVABLE_INCLUDE", target, 0)
+            if self.comparative_decoding:
+                raise NotImplementedError
+
+            circuit.append("MX", data_q1s, p_meas_final)  # XX measurement outcomes
+
+            num_data_q1s = data_q1s.size
+            lookback_inds_anc = {}
+            for j, data_q1 in enumerate(data_q1s):
+                for anc_X_qubit in tanner_graph.vs[data_q1].neighbors():
+                    if anc_X_qubit["pauli"] == "X" and anc_X_qubit["color"] != "r":
+                        anc_X_qid = anc_X_qubit.index
+                        lookback_ind = j - num_data_q1s
+                        try:
+                            lookback_inds_anc[anc_X_qid].append(lookback_ind)
+                        except KeyError:
+                            lookback_inds_anc[anc_X_qid] = [lookback_ind]
+
+            obs_X_lookback_inds = []
+            for j_anc_X, anc_X_qubit in enumerate(anc_X_qubits):
+                check_meas_lookback_ind = (
+                    j_anc_X - num_data_q1s - num_data_q2s - num_anc_X_qubits
+                )
+                color = anc_X_qubit["color"]
+                if color != "g":
+                    obs_X_lookback_inds.append(check_meas_lookback_ind)
+
+                try:
+                    lookback_inds = lookback_inds_anc[anc_X_qubit.index]
+                except KeyError:
+                    continue
+
+                lookback_inds.append(check_meas_lookback_ind)
+                target = [stim.target_rec(ind) for ind in lookback_inds]
+                color_val = self.color_to_color_val(color)
+                coords = self.get_qubit_coords(anc_X_qubit) + (0, 0, color_val)
+                circuit.append("DETECTOR", target, coords)
+
+            target = [stim.target_rec(ind) for ind in obs_X_lookback_inds]
+            circuit.append("OBSERVABLE_INCLUDE", target, 1)
+            if self.comparative_decoding:
+                raise NotImplementedError
+
+        else:
+            raise NotImplementedError
+
+        # Logical observables
+        if temp_bdry_type in {"X", "Y", "Z"}:
+            if circuit_type in {"tri", "growing", "cult+growing"}:
+                qubits_logs = [tanner_graph.vs.select(obs=True)]
+                if circuit_type == "tri":
+                    bdry_colors = [0]
+                elif circuit_type == "growing":
+                    bdry_colors = [1]
+                elif circuit_type == "cult+growing":
+                    bdry_colors = [1]
+
+            # elif shape == "cult+growing":
+            #     qubits_logs = [tanner_graph.vs.select(pauli=None)]
+            #     bdry_colors = [1]
+
+            elif circuit_type == "rec":
+                qubits_log_r = tanner_graph.vs.select(obs_r=True)
+                qubits_log_g = tanner_graph.vs.select(obs_g=True)
+                qubits_logs = [qubits_log_r, qubits_log_g]
+                bdry_colors = [1, 0]
+
+            for obs_id, qubits_log in enumerate(qubits_logs):
+                lookback_inds = [
+                    -num_data_qubits + data_qids.index(q.index) for q in qubits_log
+                ]
+                if obs_included_lookbacks:
+                    num_meas_after_cult = num_anc_qubits * self.rounds + num_data_qubits
+                    lookback_inds.extend(
+                        lb - num_meas_after_cult for lb in obs_included_lookbacks
+                    )
+
+                target = [stim.target_rec(ind) for ind in lookback_inds]
+                circuit.append("OBSERVABLE_INCLUDE", target, obs_id)
+                if self.comparative_decoding:
+                    color_val = bdry_colors[obs_id]
+                    if temp_bdry_type == "X":
+                        pauli_val = 0
+                    elif temp_bdry_type == "Y":
+                        pauli_val = 1
+                    elif temp_bdry_type == "Z":
+                        pauli_val = 2
+                    else:
+                        raise ValueError(f"Invalid temp_bdry_type: {temp_bdry_type}")
+                    coords = (-1, -1, -1, pauli_val, color_val, obs_id)
+                    circuit.append("DETECTOR", target, coords)
+
+        return circuit
 
     def _generate_det_id_info(
         self,
@@ -425,7 +1276,7 @@ class ColorCode:
             y = round(coords[1])
             t = round(coords[2])
             pauli = round(coords[3])
-            color = color_val_to_color(round(coords[4]))
+            color = self.color_val_to_color(round(coords[4]))
             is_obs = len(coords) == 6 and round(coords[-1]) >= 0
 
             if not is_obs:
@@ -992,7 +1843,7 @@ class ColorCode:
             if colors == ["r", "g", "b"]:
                 best_colors = best_color_inds
             else:
-                best_colors = np.array([color_to_color_val(c) for c in colors])[
+                best_colors = np.array([self.color_to_color_val(c) for c in colors])[
                     best_color_inds
                 ]
 

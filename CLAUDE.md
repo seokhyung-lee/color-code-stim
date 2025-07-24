@@ -34,11 +34,14 @@ pytest tests/
 # Run specific test
 pytest tests/test_specific.py::test_function_name
 
-# Run circuit equivalence tests using tox
-tox -e main    # Test original implementation
-tox -e dev     # Test refactored implementation  
-tox -e compare # Compare results between implementations
-tox -e full    # Complete verification pipeline
+# Run equivalence tests between legacy and refactored implementations
+pytest tests/test_color_code_refactor/phase1_tests/ -v    # Circuit generation equivalence
+pytest tests/test_color_code_refactor/phase2_tests/ -v    # Tanner graph equivalence
+pytest tests/test_color_code_refactor/integration_tests/ -v # Integration and performance tests
+
+# Run quick validation tests
+pytest tests/test_color_code_refactor/phase1_tests/test_circuit_equivalence.py::TestPhase1CircuitEquivalence::test_quick_circuit_equivalence -v
+pytest tests/test_color_code_refactor/phase2_tests/test_tanner_graph_equivalence.py::TestPhase2TannerGraphEquivalence::test_quick_graph_equivalence -v
 ```
 
 ## Code Architecture
@@ -57,23 +60,29 @@ tox -e full    # Complete verification pipeline
    - Detector and observable placement
    - Integration with cultivation circuits
 
-3. **Configuration Module** (`src/color_code_stim/config.py`): Centralized configuration and constants:
+3. **TannerGraphBuilder Class** (`src/color_code_stim/graph_builder.py`): Modular Tanner graph construction that handles:
+   - Graph structure creation for different patch types (triangular, rectangular)
+   - Vertex and edge attribute management (coordinates, colors, types)
+   - Qubit group organization and coordinate mapping
+   - Lattice and Tanner edge construction
+
+4. **Configuration Module** (`src/color_code_stim/config.py`): Centralized configuration and constants:
    - CNOT schedules for different circuit topologies
    - Type definitions and color/pauli mappings
    - Helper functions for coordinate and color conversions
 
-4. **Circuit Types**: The package supports multiple circuit configurations:
+5. **Circuit Types**: The package supports multiple circuit configurations:
    - `"tri"`: Memory experiments on triangular patches
    - `"rec"`: Memory experiments on rectangular patches  
    - `"rec_stability"`: Stability experiments on rectangle-like patches
    - `"growing"`: Growing operations from one distance to another
    - `"cult+growing"`: Cultivation followed by growing operations
 
-5. **DEM Decomposition** (`src/color_code_stim/dem_decomp.py`): Handles decomposition of detector error models by color for the concatenated decoder.
+6. **DEM Decomposition** (`src/color_code_stim/dem_decomp.py`): Handles decomposition of detector error models by color for the concatenated decoder.
 
-6. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
+7. **Cultivation Support** (`src/color_code_stim/cultivation.py`): Implements cultivation circuits based on Gidney, Shutty, and Jones' work, with pre-computed circuits stored in `src/color_code_stim/assets/cultivation_circuits/`.
 
-7. **Utilities**: 
+8. **Utilities**: 
    - `stim_utils.py`: Helper functions for working with Stim circuits and error models
    - `visualization.py`: Plotting functions for lattices and Tanner graphs
    - `utils.py`: General utility functions for file I/O and performance calculations
@@ -103,3 +112,18 @@ tox -e full    # Complete verification pipeline
 ### Entry Points
 
 The main entry point is the `ColorCode` class constructor in `color_code.py`. Example usage can be found in `getting_started.ipynb`.
+
+### Testing Structure
+
+The project uses a comprehensive equivalence testing approach to validate the ongoing modular refactoring:
+
+9. **Legacy Reference** (`src/color_code_stim/color_code_legacy.py`): Copy of the original monolithic implementation used as ground truth for equivalence testing.
+
+10. **Modular Test Suite** (`tests/test_color_code_refactor/`): Phase-based equivalence testing structure:
+    - **Phase 1 Tests**: Circuit generation equivalence (CircuitBuilder vs legacy)
+    - **Phase 2 Tests**: Tanner graph construction equivalence (TannerGraphBuilder vs legacy)
+    - **Integration Tests**: End-to-end equivalence and performance regression testing
+    - **Test Utilities**: Comprehensive comparison functions and test parameter generation
+    - **Future Phases**: Ready scaffolding for DEM, decoder, and simulation testing
+
+The test suite ensures 100% functional equivalence between the refactored modular implementation and the original monolithic codebase while enabling systematic validation of each migration phase.

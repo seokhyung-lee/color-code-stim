@@ -5,12 +5,13 @@ This module centralizes configuration data, type definitions, and utility functi
 used throughout the color_code_stim package.
 """
 
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Tuple, Optional
 
 # Type definitions
 PAULI_LABEL = Literal["X", "Y", "Z"]
 COLOR_LABEL = Literal["r", "g", "b"]
 CIRCUIT_TYPE = Literal["tri", "rec", "rec_stability", "growing", "cult+growing"]
+PATCH_TYPE = Literal["tri", "rec", "rec_stability"]
 
 # CNOT Schedules for triangular color codes
 # Moved from ColorCode.__init__ method for centralized configuration
