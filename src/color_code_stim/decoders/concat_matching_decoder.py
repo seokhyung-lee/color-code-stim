@@ -49,9 +49,6 @@ class ConcatMatchingDecoder(BaseDecoder):
     def __init__(
         self,
         dem_manager: DemManager,
-        circuit_type: str,
-        num_obs: int,
-        comparative_decoding: bool = False,
     ):
         """
         Initialize the concatenated matching decoder.
@@ -60,17 +57,11 @@ class ConcatMatchingDecoder(BaseDecoder):
         ----------
         dem_manager : DEMManager
             Manager providing access to decomposed DEMs and matrices
-        circuit_type : str
-            Type of circuit (tri, rec, rec_stability, growing, cult+growing)
-        num_obs : int
-            Number of observables in the quantum code
-        comparative_decoding : bool, default False
-            Whether to enable comparative decoding for logical gap calculation
         """
         self.dem_manager = dem_manager
-        self.circuit_type = circuit_type
-        self.num_obs = num_obs
-        self.comparative_decoding = comparative_decoding
+        self.circuit_type = dem_manager.circuit_type
+        self.num_obs = dem_manager.circuit.num_observables
+        self.comparative_decoding = dem_manager.comparative_decoding
 
     def supports_comparative_decoding(self) -> bool:
         """Return True - this decoder supports comparative decoding."""
