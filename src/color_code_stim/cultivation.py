@@ -83,7 +83,7 @@ def _is_data_qubit(ox: int, oy: int) -> bool:
     based on the provided rules.
 
     Parameters
-----------
+    ----------
     ox: Original X coordinate.
     oy: Original Y coordinate.
 
@@ -177,6 +177,7 @@ def _transform_coords(
     x_offset: The x offset to apply to the coordinates (default 0).
     y_offset: The y offset to apply to the coordinates (default 0).
     t_offset: The t offset to apply to the coordinates of detectors (default 0).
+
     Returns
     -------
     A list of transformed coordinates [x', y, z, ...].
@@ -246,9 +247,10 @@ def _adjust_cultivation_circuit_coords(
     x_offset: The x offset to apply to the coordinates (default 0).
     y_offset: The y offset to apply to the coordinates (default 0).
 
-    Returns:
-        A new stim.Circuit with adjusted coordinates in QUBIT_COORDS and
-        DETECTOR instructions. Other instructions are preserved.
+    Returns
+    -------
+    A new stim.Circuit with adjusted coordinates in QUBIT_COORDS and
+    DETECTOR instructions. Other instructions are preserved.
     """
     # It's often easier to work with a flattened circuit when modifying
     # elements affected by loops or coordinate shifts.
