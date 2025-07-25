@@ -609,7 +609,7 @@ class CircuitBuilder:
         circuit.append("RZ", self.anc_Z_qids)
         circuit.append("RX", self.anc_X_qids)
 
-        if self.p_reset > 0:
+        if self.p_reset > 0 and not self.perfect_logical_initialization:
             circuit.append("X_ERROR", self.anc_Z_qids, self.p_reset)
             circuit.append("Z_ERROR", self.anc_X_qids, self.p_reset)
 
