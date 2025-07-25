@@ -151,7 +151,7 @@ class DemManager:
                     qubit = tanner_graph.vs.find(name=name)
                     color = qubit["color"]
                 elif pauli == 1:
-                    name_X = f"{x}-{y}-X"
+                    name_X = f"{x + 2}-{y}-X"
                     name_Z = f"{x}-{y}-Z"
                     qubit_X = tanner_graph.vs.find(name=name_X)
                     qubit_Z = tanner_graph.vs.find(name=name_Z)

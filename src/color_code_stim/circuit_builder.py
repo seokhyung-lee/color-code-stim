@@ -185,8 +185,8 @@ class CircuitBuilder:
 
         # Validate d and d2 constraints
         if self.circuit_type == "tri":
-            if self.d < 3 or self.d % 2 == 0 or self.d2 is not None:
-                raise ValueError(f"'tri' circuit requires d: odd >= 3, d2: None. Got d={self.d}, d2={self.d2}")
+            if self.d < 3 or self.d % 2 == 0:
+                raise ValueError(f"'tri' circuit requires d: odd >= 3. Got d={self.d}")
 
         elif self.circuit_type == "rec":
             if (self.d < 2 or self.d % 2 != 0 or self.d2 is None or 

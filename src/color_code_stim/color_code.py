@@ -169,9 +169,9 @@ class ColorCode:
 
         superdense_circuit : bool, default False
             Whether to use superdense syndrome extraction circuit. When True, the syndrome
-            extraction follows a 4-step pattern: (1) X-type anc → Z-type anc CNOTs, 
+            extraction follows a 4-step pattern: (1) X-type anc → Z-type anc CNOTs,
             (2) data → anc CNOTs with spatial routing, (3) anc → data CNOTs, (4) repeat step 1.
-            If True and cnot_schedule is 'tri_optimal', it automatically switches to 
+            If True and cnot_schedule is 'tri_optimal', it automatically switches to
             'superdense_default'.
 
         temp_bdry_type : {'X', 'Y', 'Z', 'x', 'y', 'z'}, optional
@@ -256,7 +256,7 @@ class ColorCode:
         # Automatic cnot_schedule selection for superdense circuits
         if superdense_circuit and cnot_schedule == "tri_optimal":
             cnot_schedule = "superdense_default"
-        
+
         if isinstance(cnot_schedule, str):
             if cnot_schedule in CNOT_SCHEDULES:
                 cnot_schedule = CNOT_SCHEDULES[cnot_schedule]
@@ -272,18 +272,6 @@ class ColorCode:
         if noise_model is not None:
             # Use provided NoiseModel
             self.noise_model = noise_model
-
-            # For cult+growing, validate that p_circuit is provided and p_bitflip is 0 for backward compatibility
-            if circuit_type in {"cultivation+growing", "cult+growing"}:
-                # We still need p_circuit for the assertion, even though we use noise_model
-                if p_circuit is None:
-                    raise ValueError(
-                        "p_circuit must be provided for cult+growing circuit type"
-                    )
-                if p_bitflip > 0:
-                    raise ValueError(
-                        "p_bitflip must be 0 for cult+growing circuit type"
-                    )
         else:
             # Create NoiseModel from individual parameters
             if p_circuit is not None:
