@@ -136,9 +136,7 @@ class CircuitBuilder:
 
         # Build syndrome extraction circuits
         synd_extr_circuits, obs_included_lookbacks = (
-            self._build_syndrome_extraction_circuits(
-                red_links, data_q1s, data_q2s, interface_detectors_info
-            )
+            self._build_syndrome_extraction_circuits(interface_detectors_info)
         )
 
         # Add data qubit initialization
