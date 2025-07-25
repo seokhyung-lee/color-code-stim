@@ -53,7 +53,7 @@ class ColorCode:
     interface_detector_ids: List[int]
     dems_decomposed: Dict[COLOR_LABEL, DemDecomp]
     perfect_init_final: bool
-    physical_probs: Dict[
+    noise_model: Dict[
         Literal["bitflip", "reset", "meas", "cnot", "idle", "cult"], float
     ]
     comparative_decoding: bool
@@ -78,6 +78,7 @@ class ColorCode:
         cnot_schedule: Union[str, List[int]] = "tri_optimal",
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         p_bitflip: float = 0.0,
+        p_depol: float = 0.0,
         p_reset: float = 0.0,
         p_meas: float = 0.0,
         p_cnot: float = 0.0,
@@ -122,8 +123,8 @@ class ColorCode:
               followed by a growing operation to distance `d2`. Must be `d2 > d`.
 
         d2 : int >= 3, optional
-            Second code distance required for several circuit types.
-            If not provided, `d2 = d`.
+            Second code distance required for circuit types 'rec'/'rectangle', 'growing',
+            and 'cult+growing'. If not provided, `d2 = d` is used.
 
         cnot_schedule : {'tri_optimal', 'tri_optimal_reversed'} or list of 12 integers,
                         default 'tri_optimal'
@@ -143,25 +144,25 @@ class ColorCode:
             `cult+growing`. For the other circuit types, it is `Z` by default.
 
         p_bitflip : float, default 0
-            Bit-flip probability at the start of each round.
+            Bit-flip noise on every data qubit at the start of each round.
+        p_depol : float, default 0
+            Depolarizing noise on every data qubit at the start of each round.
         p_reset : float, default 0
-            Probability of a wrong qubit reset (i.e., producing an
-            orthogonal state).
+            Error rate for each reset (producing an orthogonal state)
         p_meas : float, default 0
-            Probability of a flipped measurement outcome.
+            Error rate for each measurement (flipped measurement outcome)
         p_cnot : float, default 0
-            Strength of a two-qubit depolarizing noise channel following
-            each CNOT gate.
+            Two-qubit depolarizing noise rate for each CNOT gate
         p_idle : float, default 0
-            Strength of a single-qubit depolarizing noise channel following
-            each idle gate.
+            Single-qubit depolarizing noise rate for each idle gate
         p_circuit : float, optional
-            If given, p_reset = p_meas = p_cnot = p_idle = p_circuit.
+            If given, p_reset = p_meas = p_cnot = p_idle = p_circuit
         p_cult : float, optional
-            Physical error probability during cultivation (only used for 'cult+growing'
-            circuits). If not given, `p_cult = p_circuit`.
+            Physical error rate during cultivation (only used for 'cult+growing'
+            circuits). If not given, `p_cult = p_cnot` is used.
+
         perfect_init_final : bool, default False
-            Whether to use perfect initialization and final measurement.
+            Whether to use perfect initialization and final measurement
         comparative_decoding : bool, default False
             Whether to use the comparative decoding technique. If True, observables are
             included as additional detectors and decoding can be done by running the
@@ -263,15 +264,16 @@ class ColorCode:
 
         self.cnot_schedule = cnot_schedule
         self.perfect_init_final = perfect_init_final
-        self.physical_probs = {
+        self.noise_model = {
             "bitflip": p_bitflip,
+            "depol": p_depol,
             "reset": p_reset,
             "meas": p_meas,
             "cnot": p_cnot,
             "idle": p_idle,
         }
         if self.circuit_type == "cult+growing":
-            self.physical_probs["cult"] = p_cult if p_cult is not None else p_circuit
+            self.noise_model["cult"] = p_cult if p_cult is not None else p_cnot
         self.comparative_decoding = comparative_decoding
 
         self.exclude_non_essential_pauli_detectors = (
@@ -286,7 +288,7 @@ class ColorCode:
         if self.circuit_type == "cult+growing":
             if cultivation_circuit is None:
                 cultivation_circuit = _load_cultivation_circuit(
-                    d=d, p=self.physical_probs["cult"]
+                    d=d, p=self.noise_model["cult"]
                 )
 
         else:
@@ -311,7 +313,7 @@ class ColorCode:
             circuit_type=self.circuit_type,
             cnot_schedule=self.cnot_schedule,
             temp_bdry_type=self.temp_bdry_type,
-            physical_probs=self.physical_probs,
+            noise_model=self.noise_model,
             perfect_init_final=self.perfect_init_final,
             tanner_graph=self.tanner_graph,
             qubit_groups=self.qubit_groups,
@@ -665,9 +667,7 @@ class ColorCode:
                 "errors_to_qubits is only available when rounds = 1."
             )
 
-        if any(
-            prob > 0 for key, prob in self.physical_probs.items() if key != "bitflip"
-        ):
+        if any(prob > 0 for key, prob in self.noise_model.items() if key != "bitflip"):
             raise NotImplementedError(
                 "errors_to_qubits is only available under bit-flip noise "
                 "(only p_bitflip is nonzero)."
@@ -988,7 +988,7 @@ class ColorCode:
     def _test_attribute_picklability(self) -> Tuple[List[str], List[str]]:
         """
         Test which attributes are picklable and which are not.
-        
+
         Returns
         -------
         picklable : List[str]
@@ -998,10 +998,10 @@ class ColorCode:
         """
         import pickle
         import io
-        
+
         picklable = []
         non_picklable = []
-        
+
         for attr_name, attr_value in self.__dict__.items():
             try:
                 # Try to pickle the attribute
@@ -1010,7 +1010,7 @@ class ColorCode:
                 picklable.append(attr_name)
             except Exception:
                 non_picklable.append(attr_name)
-        
+
         return picklable, non_picklable
 
     def save(self, path: str):
@@ -1026,31 +1026,29 @@ class ColorCode:
             The file path where the object should be saved.
         """
         data = self.__dict__.copy()
-        
+
         # Known non-picklable attributes based on modular architecture
         known_non_picklable = [
             # igraph objects
             "tanner_graph",  # igraph.Graph
             "qubit_groups",  # Dict[str, ig.VertexSeq]
-            
             # Complex manager and decoder objects (lazy-loaded)
             "_dem_manager",  # DemManager with igraph references
             "_concat_matching_decoder",  # ConcatMatchingDecoder
-            "_bp_decoder",  # BPDecoder 
+            "_bp_decoder",  # BPDecoder
             "_belief_concat_matching_decoder",  # BeliefConcatMatchingDecoder
             "_simulator",  # Simulator
-            
             # Cache that should be reconstructed
             "_bp_inputs",  # Dictionary cache
         ]
-        
+
         # Test remaining attributes for picklability and get dynamic exclusions
         temp_data = {k: v for k, v in data.items() if k not in known_non_picklable}
         _, additional_non_picklable = self._test_remaining_attributes(temp_data)
-        
+
         # Combine known and discovered non-picklable attributes
         all_excluded = known_non_picklable + additional_non_picklable
-        
+
         # Remove non-picklable attributes
         for key in all_excluded:
             if key in data:
@@ -1058,16 +1056,18 @@ class ColorCode:
 
         with open(path, "wb") as f:
             pickle.dump(data, f)
-    
-    def _test_remaining_attributes(self, data_dict: dict) -> Tuple[List[str], List[str]]:
+
+    def _test_remaining_attributes(
+        self, data_dict: dict
+    ) -> Tuple[List[str], List[str]]:
         """
         Test remaining attributes for picklability after excluding known non-picklable ones.
-        
+
         Parameters
         ----------
         data_dict : dict
             Dictionary of attributes to test
-            
+
         Returns
         -------
         picklable : List[str]
@@ -1077,10 +1077,10 @@ class ColorCode:
         """
         import pickle
         import io
-        
+
         picklable = []
         non_picklable = []
-        
+
         for attr_name, attr_value in data_dict.items():
             try:
                 # Try to pickle the attribute
@@ -1089,7 +1089,7 @@ class ColorCode:
                 picklable.append(attr_name)
             except Exception:
                 non_picklable.append(attr_name)
-        
+
         return picklable, non_picklable
 
     @classmethod
@@ -1121,17 +1121,17 @@ class ColorCode:
         try:
             # Step 1: Reconstruct tanner_graph and qubit_groups
             instance._reconstruct_tanner_graph_and_qubit_groups()
-            
+
             # Step 2: Clear lazy-loaded object caches (they will be recreated on demand)
             instance._dem_manager = None
             instance._concat_matching_decoder = None
-            instance._bp_decoder = None  
+            instance._bp_decoder = None
             instance._belief_concat_matching_decoder = None
             instance._simulator = None
-            
+
             # Step 3: Initialize cache
             instance._bp_inputs = {}
-            
+
         except Exception as e:
             print(f"Error during reconstruction: {e}")
             raise
@@ -1141,7 +1141,7 @@ class ColorCode:
     def _reconstruct_tanner_graph_and_qubit_groups(self):
         """
         Reconstruct tanner_graph and qubit_groups using TannerGraphBuilder.
-        
+
         This method recreates the igraph objects that cannot be pickled by using
         the same TannerGraphBuilder that was used during initialization.
         """
@@ -1152,4 +1152,3 @@ class ColorCode:
             d2=self.d2,
         )
         self.tanner_graph, self.qubit_groups = graph_builder.build()
-
