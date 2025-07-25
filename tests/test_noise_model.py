@@ -22,6 +22,8 @@ class TestNoiseModelBasics:
         assert noise['cnot'] == 0.0
         assert noise['idle'] == 0.0
         assert noise['cult'] == 0.0  # Defaults to cnot when cnot is 0
+        assert noise['idle_during_cnot'] == 0.0  # Defaults to idle when idle is 0
+        assert noise['idle_during_meas'] == 0.0  # Defaults to idle when idle is 0
     
     def test_init_with_parameters(self):
         """Test initialization with specific parameters."""
@@ -81,15 +83,15 @@ class TestNoiseModelDictionaryAccess:
         """Test keys() method."""
         noise = NoiseModel()
         keys = list(noise.keys())
-        expected_keys = ['bitflip', 'depol', 'reset', 'meas', 'cnot', 'idle', 'initial_data_qubit_depol', 'depol1_after_cnot', 'cult']
+        expected_keys = ['bitflip', 'depol', 'reset', 'meas', 'cnot', 'idle', 'initial_data_qubit_depol', 'depol1_after_cnot', 'idle_during_cnot', 'idle_during_meas', 'cult']
         assert keys == expected_keys
     
     def test_values(self):
         """Test values() method."""
         noise = NoiseModel(bitflip=0.001, depol=0.002, cnot=0.003)
         values = list(noise.values())
-        # cult should default to cnot value
-        expected_values = [0.001, 0.002, 0.0, 0.0, 0.003, 0.0, 0.0, 0.0, 0.003]
+        # cult should default to cnot value, idle_during_* should default to idle value
+        expected_values = [0.001, 0.002, 0.0, 0.0, 0.003, 0.0, 0.0, 0.0, 0.0, 0.0, 0.003]
         assert values == expected_values
     
     def test_items(self):
@@ -277,3 +279,83 @@ class TestInitialDataQubitDepol:
         assert noise['meas'] == 0.001
         assert noise['initial_data_qubit_depol'] == 0.0005
         assert noise['depol'] == 0.0  # Should remain default
+
+
+class TestIdleContextParameters:
+    """Test idle_during_cnot and idle_during_meas parameter functionality."""
+    
+    def test_default_fallback_behavior(self):
+        """Test that idle context parameters default to idle when None."""
+        noise = NoiseModel(idle=0.003)
+        assert noise['idle_during_cnot'] == 0.003  # Falls back to idle
+        assert noise['idle_during_meas'] == 0.003  # Falls back to idle
+    
+    def test_explicit_override_behavior(self):
+        """Test that explicit values override idle parameter."""
+        noise = NoiseModel(
+            idle=0.002,
+            idle_during_cnot=0.005,
+            idle_during_meas=0.001
+        )
+        assert noise['idle'] == 0.002
+        assert noise['idle_during_cnot'] == 0.005  # Overrides idle
+        assert noise['idle_during_meas'] == 0.001  # Overrides idle
+    
+    def test_zero_override_behavior(self):
+        """Test that setting to 0 overrides idle parameter."""
+        noise = NoiseModel(idle=0.002)
+        noise['idle_during_cnot'] = 0.0  # Explicit 0 overrides idle
+        noise['idle_during_meas'] = 0.0  # Explicit 0 overrides idle
+        
+        assert noise['idle'] == 0.002
+        assert noise['idle_during_cnot'] == 0.0  # Overridden to 0
+        assert noise['idle_during_meas'] == 0.0  # Overridden to 0
+    
+    def test_none_assignment_fallback(self):
+        """Test that setting to None restores fallback behavior."""
+        noise = NoiseModel(idle=0.003, idle_during_cnot=0.005)
+        assert noise['idle_during_cnot'] == 0.005  # Explicit value
+        
+        noise['idle_during_cnot'] = None  # Reset to fallback
+        assert noise['idle_during_cnot'] == 0.003  # Now falls back to idle
+    
+    def test_negative_value_validation(self):
+        """Test that negative values raise ValueError."""
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(idle_during_cnot=-0.001)
+        
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(idle_during_meas=-0.001)
+    
+    def test_negative_setitem_validation(self):
+        """Test that setting negative values raises ValueError."""
+        noise = NoiseModel()
+        
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['idle_during_cnot'] = -0.005
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['idle_during_meas'] = -0.005
+    
+    def test_in_uniform_circuit_noise(self):
+        """Test that uniform_circuit_noise excludes idle context parameters."""
+        noise = NoiseModel.uniform_circuit_noise(0.001)
+        assert noise['idle_during_cnot'] == 0.001  # Falls back to idle
+        assert noise['idle_during_meas'] == 0.001  # Falls back to idle
+        
+        # Internal storage should still be None
+        assert noise._params['idle_during_cnot'] is None
+        assert noise._params['idle_during_meas'] is None
+    
+    def test_combination_with_other_parameters(self):
+        """Test idle context parameters in combination with other parameters."""
+        noise = NoiseModel(
+            cnot=0.002,
+            idle=0.001,
+            idle_during_cnot=0.0005,
+            idle_during_meas=0.0015
+        )
+        assert noise['cnot'] == 0.002
+        assert noise['idle'] == 0.001
+        assert noise['idle_during_cnot'] == 0.0005
+        assert noise['idle_during_meas'] == 0.0015

@@ -27,6 +27,8 @@ class NoiseModel:
         cult: Optional[float] = None,
         initial_data_qubit_depol: float = 0.0,
         depol1_after_cnot: float = 0.0,
+        idle_during_cnot: Optional[float] = None,
+        idle_during_meas: Optional[float] = None,
     ):
         """
         Initialize noise model with individual parameters.
@@ -58,6 +60,14 @@ class NoiseModel:
             Single-qubit depolarizing noise rate applied to each qubit participating
             in CNOT gates after the gates are applied. If provided and positive,
             DEPOLARIZE1 is added for each qubit involved in the CNOT operations.
+        idle_during_cnot : float, optional
+            Single-qubit depolarizing noise rate for idle qubits during CNOT operations.
+            If None (default), uses the idle parameter. If set to any value (including 0),
+            overrides idle for qubits not participating in CNOT gates.
+        idle_during_meas : float, optional
+            Single-qubit depolarizing noise rate for idle qubits during measurement operations.
+            If None (default), uses the idle parameter. If set to any value (including 0),
+            overrides idle for qubits not participating in measurement operations.
 
         Examples
         --------
@@ -82,11 +92,21 @@ class NoiseModel:
             "depol1_after_cnot": float(depol1_after_cnot),
         }
 
-        # Handle cultivation noise separately since it can be None
+        # Handle special parameters that can be None
         if cult is not None:
             self._params["cult"] = float(cult)
         else:
             self._params["cult"] = None
+            
+        if idle_during_cnot is not None:
+            self._params["idle_during_cnot"] = float(idle_during_cnot)
+        else:
+            self._params["idle_during_cnot"] = None
+            
+        if idle_during_meas is not None:
+            self._params["idle_during_meas"] = float(idle_during_meas)
+        else:
+            self._params["idle_during_meas"] = None
 
         # Validate all parameters
         self.validate()
@@ -126,6 +146,8 @@ class NoiseModel:
             cult=None,  # Will default to cnot when needed
             initial_data_qubit_depol=0.0,  # Not included in circuit-level noise
             depol1_after_cnot=0.0,  # Not included in circuit-level noise
+            idle_during_cnot=None,  # Not included in circuit-level noise
+            idle_during_meas=None,  # Not included in circuit-level noise
         )
 
     def __getitem__(self, key: str) -> float:
@@ -153,15 +175,21 @@ class NoiseModel:
                 f"Unknown noise parameter '{key}'. Valid parameters: {valid_keys}"
             )
 
-        # Handle special case of cult parameter
+        # Handle special cases of parameters that can fallback to other parameters
         value = self._params[key]
         if key == "cult" and value is None:
             # Default cult to cnot rate if not explicitly set
             return self._params["cnot"]
+        elif key == "idle_during_cnot" and value is None:
+            # Default idle_during_cnot to idle rate if not explicitly set
+            return self._params["idle"]
+        elif key == "idle_during_meas" and value is None:
+            # Default idle_during_meas to idle rate if not explicitly set
+            return self._params["idle"]
 
         return value
 
-    def __setitem__(self, key: str, value: float) -> None:
+    def __setitem__(self, key: str, value: Optional[float]) -> None:
         """
         Enable dictionary-like assignment: noise_model['depol'] = 0.01.
 
@@ -169,8 +197,8 @@ class NoiseModel:
         ----------
         key : str
             Parameter name to set.
-        value : float
-            Parameter value to assign.
+        value : float or None
+            Parameter value to assign. None is allowed for certain parameters.
 
         Raises
         ------
@@ -185,6 +213,17 @@ class NoiseModel:
                 f"Unknown noise parameter '{key}'. Valid parameters: {valid_keys}"
             )
 
+        # Handle None values for special parameters
+        if value is None:
+            if key in {"cult", "idle_during_cnot", "idle_during_meas"}:
+                self._params[key] = None
+                return
+            else:
+                raise ValueError(
+                    f"Noise parameter '{key}' cannot be None. "
+                    f"Only 'cult', 'idle_during_cnot', and 'idle_during_meas' can be None."
+                )
+
         # Convert to float and validate
         float_value = float(value)
         if float_value < 0:
@@ -192,9 +231,12 @@ class NoiseModel:
                 f"Noise parameter '{key}' must be non-negative, got {float_value}"
             )
 
-        # Special handling for cult parameter
+        # Special handling for special parameters
         if key == "cult":
             self._params[key] = float_value if float_value > 0 else None
+        elif key in {"idle_during_cnot", "idle_during_meas"}:
+            # For idle context parameters, any explicit value (including 0) overrides idle
+            self._params[key] = float_value
         else:
             self._params[key] = float_value
 
@@ -259,8 +301,8 @@ class NoiseModel:
             If any parameter is negative.
         """
         for key, value in self._params.items():
-            if key == "cult" and value is None:
-                continue  # cult can be None
+            if key in {"cult", "idle_during_cnot", "idle_during_meas"} and value is None:
+                continue  # These parameters can be None
             if value < 0:
                 raise ValueError(
                     f"Noise parameter '{key}' must be non-negative, got {value}"

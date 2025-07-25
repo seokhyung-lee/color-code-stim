@@ -111,7 +111,9 @@ noise = NoiseModel(
     idle=0.0005,                    # Idle operation errors
     cult=0.002,                     # Cultivation errors (cult+growing only)
     initial_data_qubit_depol=0.001, # Initial depolarizing errors on data qubits
-    depol1_after_cnot=0.0005        # Single-qubit depolarizing noise after CNOT gates
+    depol1_after_cnot=0.0005,       # Single-qubit depolarizing noise after CNOT gates
+    idle_during_cnot=0.0008,        # Idle noise during CNOT operations (overrides idle)
+    idle_during_meas=0.0003         # Idle noise during measurement operations (overrides idle)
 )
 
 # Initial data qubit depolarizing noise timing:
@@ -122,6 +124,11 @@ noise = NoiseModel(
 # - Applied to each qubit participating in CNOT operations after the gates are applied
 # - If perfect_first_syndrome_extraction=True: Skipped during the first syndrome extraction round
 # - If perfect_logical_measurement=True: Skipped during final measurement operations
+
+# Context-specific idle noise parameters:
+# - idle_during_cnot: Overrides idle for qubits not participating in CNOT operations. If None (default), uses idle.
+# - idle_during_meas: Overrides idle for qubits not participating in measurement operations. If None (default), uses idle.
+# - For general idle periods (mixed operations), uses maximum of specified context-specific rates or falls back to idle.
 colorcode = ColorCode(
     d=5,
     rounds=5,

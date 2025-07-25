@@ -108,6 +108,8 @@ class CircuitBuilder:
         self.p_idle = noise_model["idle"]
         self.p_initial_data_qubit_depol = noise_model["initial_data_qubit_depol"]
         self.p_depol1_after_cnot = noise_model["depol1_after_cnot"]
+        self.p_idle_during_cnot = noise_model["idle_during_cnot"]
+        self.p_idle_during_meas = noise_model["idle_during_meas"]
 
         # Extract qubit groups
         self.data_qubits = qubit_groups["data"]
@@ -186,16 +188,14 @@ class CircuitBuilder:
     def _add_initial_data_qubit_depol(self, circuit: stim.Circuit) -> None:
         """
         Add initial data qubit depolarizing noise.
-        
+
         Timing depends on perfect_first_syndrome_extraction:
         - If True: Applied after first syndrome extraction round
         - If False: Applied after data qubit initialization
         """
         if self.p_initial_data_qubit_depol > 0:
             circuit.append(
-                "DEPOLARIZE1", 
-                self.data_qids, 
-                self.p_initial_data_qubit_depol
+                "DEPOLARIZE1", self.data_qids, self.p_initial_data_qubit_depol
             )
 
     def _identify_red_links(
@@ -276,10 +276,12 @@ class CircuitBuilder:
 
         for first in [True, False]:
             # Check if this is the first round and perfect_first_syndrome_extraction is enabled
-            skip_noise = (first and self.perfect_first_syndrome_extraction)
-            
+            skip_noise = first and self.perfect_first_syndrome_extraction
+
             # Build base syndrome extraction circuit (with or without noise)
-            synd_extr_circuit = self._build_base_syndrome_extraction(perfect_round=skip_noise)
+            synd_extr_circuit = self._build_base_syndrome_extraction(
+                perfect_round=skip_noise
+            )
 
             # Add bit-flip errors (skip if perfect first round)
             if self.p_bitflip > 0 and not skip_noise:
@@ -304,6 +306,14 @@ class CircuitBuilder:
             synd_extr_circuit.append("MRZ", self.anc_Z_qids, p_meas_round)
             synd_extr_circuit.append("MRX", self.anc_X_qids, p_meas_round)
 
+            # Apply idle noise to data qubits during measurement operations
+            if not skip_noise:
+                idle_rate_meas = self._get_idle_rate_for_context("meas")
+                if idle_rate_meas > 0:
+                    synd_extr_circuit.append(
+                        "DEPOLARIZE1", self.data_qids, idle_rate_meas
+                    )
+
             # Add detectors
             obs_included_lookbacks = self._add_detectors(
                 synd_extr_circuit,
@@ -316,8 +326,6 @@ class CircuitBuilder:
             if self.p_reset > 0:
                 synd_extr_circuit.append("X_ERROR", self.anc_Z_qids, self.p_reset)
                 synd_extr_circuit.append("Z_ERROR", self.anc_X_qids, self.p_reset)
-            if self.p_idle > 0:
-                synd_extr_circuit.append("DEPOLARIZE1", self.data_qids, self.p_idle)
 
             synd_extr_circuit.append("TICK")
             synd_extr_circuit.append("SHIFT_COORDS", (), (0, 0, 1))
@@ -326,9 +334,11 @@ class CircuitBuilder:
 
         return synd_extr_circuits, obs_included_lookbacks
 
-    def _build_base_syndrome_extraction(self, perfect_round: bool = False) -> stim.Circuit:
+    def _build_base_syndrome_extraction(
+        self, perfect_round: bool = False
+    ) -> stim.Circuit:
         """Build the base syndrome extraction circuit without SPAM operations.
-        
+
         Parameters
         ----------
         perfect_round : bool, default False
@@ -381,13 +391,14 @@ class CircuitBuilder:
             synd_extr_circuit.append("CX", CX_targets)
             if self.p_cnot > 0 and not perfect_round:
                 synd_extr_circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
-            
+
             # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
             self._apply_depol1_after_cnot(synd_extr_circuit, CX_targets, perfect_round)
 
-            if self.p_idle > 0 and not perfect_round:
+            idle_rate = self._get_idle_rate_for_context("cnot")
+            if idle_rate > 0 and not perfect_round:
                 idling_qids = list(self.all_qids_set - operated_qids)
-                synd_extr_circuit.append("DEPOLARIZE1", idling_qids, self.p_idle)
+                synd_extr_circuit.append("DEPOLARIZE1", idling_qids, idle_rate)
 
             synd_extr_circuit.append("TICK")
 
@@ -722,12 +733,20 @@ class CircuitBuilder:
             circuit.append("DEPOLARIZE2", red_links.ravel(), self.p_cnot)
         # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
         # Use perfect_logical_measurement flag to determine if noise should be skipped
-        self._apply_depol1_after_cnot(circuit, red_links.ravel(), self.perfect_logical_measurement)
+        self._apply_depol1_after_cnot(
+            circuit, red_links.ravel(), self.perfect_logical_measurement
+        )
 
         circuit.append("TICK")
 
         # ZZ measurement outcomes
         circuit.append("MZ", data_q2s, p_meas_final)
+
+        # Apply idle noise to ancilla qubits during data qubit measurements
+        if not self.perfect_logical_measurement:
+            idle_rate_meas = self._get_idle_rate_for_context("meas")
+            if idle_rate_meas > 0:
+                circuit.append("DEPOLARIZE1", self.anc_qids, idle_rate_meas)
 
         num_data_q2s = data_q2s.size
         lookback_inds_anc = {}
@@ -763,6 +782,12 @@ class CircuitBuilder:
 
         # XX measurement outcomes
         circuit.append("MX", data_q1s, p_meas_final)
+
+        # Apply idle noise to ancilla qubits during data qubit measurements
+        if not self.perfect_logical_measurement:
+            idle_rate_meas = self._get_idle_rate_for_context("meas")
+            if idle_rate_meas > 0:
+                circuit.append("DEPOLARIZE1", self.anc_qids, idle_rate_meas)
 
         num_data_q1s = data_q1s.size
         lookback_inds_anc = {}
@@ -806,7 +831,7 @@ class CircuitBuilder:
     ) -> None:
         """
         Apply single-qubit depolarizing noise to each qubit involved in CNOT gates.
-        
+
         Parameters
         ----------
         circuit : stim.Circuit
@@ -818,13 +843,54 @@ class CircuitBuilder:
         """
         if self.p_depol1_after_cnot == 0 or perfect_round:
             return
-            
+
         # Extract unique qubits from CX_targets
         # CX_targets format: [control1, target1, control2, target2, ...]
         unique_qubits = list(set(CX_targets))
-        
+
         if unique_qubits:
             circuit.append("DEPOLARIZE1", unique_qubits, self.p_depol1_after_cnot)
+
+    def _get_idle_rate_for_context(self, context: str) -> float:
+        """
+        Get the appropriate idle noise rate for a given context.
+
+        Parameters
+        ----------
+        context : str
+            Context for which to get idle rate. Must be one of:
+            - "cnot": During CNOT operations
+            - "meas": During measurement operations
+            - "general": General idle periods (mixed CNOT and measurement)
+
+        Returns
+        -------
+        float
+            Appropriate idle noise rate based on context and parameter overrides.
+            For general context, uses maximum between idle_during_cnot and idle_during_meas
+            if both are specified, otherwise falls back to individual overrides or base idle.
+        """
+        if context == "cnot" and self.p_idle_during_cnot is not None:
+            return self.p_idle_during_cnot
+        elif context == "meas" and self.p_idle_during_meas is not None:
+            return self.p_idle_during_meas
+        elif context == "general":
+            # For general idle periods (mixed operations), use maximum of context-specific rates
+            rates_to_consider = []
+
+            if self.p_idle_during_cnot is not None:
+                rates_to_consider.append(self.p_idle_during_cnot)
+            if self.p_idle_during_meas is not None:
+                rates_to_consider.append(self.p_idle_during_meas)
+
+            if rates_to_consider:
+                # Use maximum of specified context-specific rates
+                return max(rates_to_consider)
+            else:
+                # Fall back to base idle rate if no context-specific rates specified
+                return self.p_idle
+        else:
+            return self.p_idle
 
     def _add_logical_observables(
         self, circuit: stim.Circuit, obs_included_lookbacks: Set
