@@ -114,7 +114,7 @@ class CircuitBuilder:
         self.p_depol1_after_cnot = noise_model["depol1_after_cnot"]
         self.p_idle_during_cnot = noise_model["idle_during_cnot"]
         self.p_idle_during_meas = noise_model["idle_during_meas"]
-        
+
         # Extract granular reset/measurement rates
         self.p_reset_data = noise_model["reset_data"]
         self.p_reset_anc_X = noise_model["reset_anc_X"]
@@ -291,9 +291,14 @@ class CircuitBuilder:
             skip_noise = first and self.perfect_first_syndrome_extraction
 
             # Build base syndrome extraction circuit (with or without noise)
-            synd_extr_circuit = self._build_base_syndrome_extraction(
-                perfect_round=skip_noise
-            )
+            base_result = self._build_base_syndrome_extraction(perfect_round=skip_noise)
+
+            # Handle different return types (regular vs superdense circuits)
+            if self.superdense_circuit:
+                synd_extr_circuit, z_anc_data_connections = base_result
+            else:
+                synd_extr_circuit = base_result
+                z_anc_data_connections = None
 
             # Add bit-flip errors (skip if perfect first round)
             if self.p_bitflip > 0 and not skip_noise:
@@ -321,6 +326,22 @@ class CircuitBuilder:
                 p_meas_anc_Z = self._get_meas_rate("anc_Z")
                 p_meas_anc_X = self._get_meas_rate("anc_X")
             synd_extr_circuit.append("MRZ", self.anc_Z_qids, p_meas_anc_Z)
+
+            # Add pauli feedforward for superdense syndrome extraction
+            if self.superdense_circuit and z_anc_data_connections:
+                # For each Z-type ancilla (in reverse measurement order)
+                for i, anc_Z_qid in enumerate(reversed(self.anc_Z_qids)):
+                    if anc_Z_qid in z_anc_data_connections:
+                        connected_data_qids = z_anc_data_connections[anc_Z_qid]
+                        # Measurement result index: most recent measurement = -1, next = -2, etc.
+                        measurement_target = stim.target_rec(-(i + 1))
+
+                        # Add CX gate from measurement result to each connected data qubit
+                        for data_qid in connected_data_qids:
+                            synd_extr_circuit.append(
+                                "CX", [measurement_target, data_qid]
+                            )
+
             synd_extr_circuit.append("MRX", self.anc_X_qids, p_meas_anc_X)
 
             # Apply idle noise to data qubits during measurement operations
@@ -356,18 +377,24 @@ class CircuitBuilder:
 
     def _build_base_syndrome_extraction(
         self, perfect_round: bool = False
-    ) -> stim.Circuit:
+    ) -> Union[stim.Circuit, Tuple[stim.Circuit, Dict[int, List[int]]]]:
         """Build the base syndrome extraction circuit without SPAM operations.
 
         Parameters
         ----------
         perfect_round : bool, default False
             If True, skip CNOT and idle errors for a perfect syndrome extraction round.
+
+        Returns
+        -------
+        stim.Circuit or Tuple[stim.Circuit, Dict[int, List[int]]]
+            For regular circuits: Returns just the circuit.
+            For superdense circuits: Returns tuple of (circuit, z_anc_data_connections).
         """
         # Route to superdense version if enabled
         if self.superdense_circuit:
             return self._build_superdense_syndrome_extraction(perfect_round)
-        
+
         synd_extr_circuit = stim.Circuit()
 
         for timeslice in range(1, max(self.cnot_schedule) + 1):
@@ -430,7 +457,7 @@ class CircuitBuilder:
 
     def _build_superdense_syndrome_extraction(
         self, perfect_round: bool = False
-    ) -> stim.Circuit:
+    ) -> Tuple[stim.Circuit, Dict[int, List[int]]]:
         """Build the superdense syndrome extraction circuit without SPAM operations.
 
         Implements the 4-step superdense pattern:
@@ -443,26 +470,51 @@ class CircuitBuilder:
         ----------
         perfect_round : bool, default False
             If True, skip CNOT and idle errors for a perfect syndrome extraction round.
+
+        Returns
+        -------
+        stim.Circuit
+            The superdense syndrome extraction circuit.
+        Dict[int, List[int]]
+            Dictionary mapping Z-type ancilla qids to lists of connected data qids.
+            Used for implementing classical controlled gates after measurements.
         """
         synd_extr_circuit = stim.Circuit()
+
+        # Track connections between Z-type ancillas and data qubits
+        z_anc_data_connections: Dict[int, List[int]] = {}
 
         # Step 1: X-type anc → Z-type anc CNOTs (same face_x)
         self._add_anc_to_anc_cnots(synd_extr_circuit, perfect_round)
 
         # Step 2: Data → anc CNOTs using first half of schedule
-        self._add_data_anc_cnots(synd_extr_circuit, self.cnot_schedule[:6], 
-                                 data_to_anc=True, perfect_round=perfect_round)
+        self._add_data_anc_cnots(
+            synd_extr_circuit,
+            self.cnot_schedule[:6],
+            data_to_anc=True,
+            perfect_round=perfect_round,
+            track_connections=True,
+            connections_dict=z_anc_data_connections,
+        )
 
-        # Step 3: Anc → data CNOTs using second half of schedule  
-        self._add_data_anc_cnots(synd_extr_circuit, self.cnot_schedule[6:], 
-                                 data_to_anc=False, perfect_round=perfect_round)
+        # Step 3: Anc → data CNOTs using second half of schedule
+        self._add_data_anc_cnots(
+            synd_extr_circuit,
+            self.cnot_schedule[6:],
+            data_to_anc=False,
+            perfect_round=perfect_round,
+            track_connections=True,
+            connections_dict=z_anc_data_connections,
+        )
 
         # Step 4: Repeat step 1
         self._add_anc_to_anc_cnots(synd_extr_circuit, perfect_round)
 
-        return synd_extr_circuit
+        return synd_extr_circuit, z_anc_data_connections
 
-    def _add_anc_to_anc_cnots(self, circuit: stim.Circuit, perfect_round: bool = False) -> None:
+    def _add_anc_to_anc_cnots(
+        self, circuit: stim.Circuit, perfect_round: bool = False
+    ) -> None:
         """Add X-type anc → Z-type anc CNOTs for superdense circuit."""
         CX_targets = []
         operated_qids = set()
@@ -493,7 +545,7 @@ class CircuitBuilder:
             circuit.append("CX", CX_targets)
             if self.p_cnot > 0 and not perfect_round:
                 circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
-            
+
             # Apply single-qubit depolarizing noise
             self._apply_depol1_after_cnot(circuit, CX_targets, perfect_round)
 
@@ -505,19 +557,39 @@ class CircuitBuilder:
 
             circuit.append("TICK")
 
-    def _add_data_anc_cnots(self, circuit: stim.Circuit, schedule_part: List[int], 
-                           data_to_anc: bool, perfect_round: bool = False) -> None:
+    def _add_data_anc_cnots(
+        self,
+        circuit: stim.Circuit,
+        schedule_part: List[int],
+        data_to_anc: bool,
+        perfect_round: bool = False,
+        track_connections: bool = False,
+        connections_dict: Optional[Dict[int, List[int]]] = None,
+    ) -> None:
         """Add data ↔ anc CNOTs for superdense circuit with spatial routing.
-        
+
         For superdense circuits:
         - schedule_part contains 6 elements (timeslices for the 6 spatial positions)
         - All 6 spatial positions are covered in both data→anc and anc→data steps
         - Ancilla type (Z vs X) is determined solely by spatial routing logic
+
+        Parameters
+        ----------
+        circuit : stim.Circuit
+            Circuit to add CNOT operations to.
+        schedule_part : List[int]
+            Timeslice schedule for CNOT operations.
+        data_to_anc : bool
+            Direction of CNOT (True: data→anc, False: anc→data).
+        perfect_round : bool, default False
+            If True, skip CNOT and idle errors.
+        track_connections : bool, default False
+            If True, record Z-ancilla to data qubit connections.
+        connections_dict : Optional[Dict[int, List[int]]], default None
+            Dictionary to store Z-ancilla to data connections when tracking enabled.
         """
         for timeslice in range(1, max(schedule_part) + 1):
-            targets = [
-                i for i, val in enumerate(schedule_part) if val == timeslice
-            ]
+            targets = [i for i, val in enumerate(schedule_part) if val == timeslice]
             operated_qids = set()
             CX_targets = []
 
@@ -544,7 +616,7 @@ class CircuitBuilder:
                     data_qubit_x = anc_qubit["face_x"] + offset[0]
                     data_qubit_y = anc_qubit["face_y"] + offset[1]
                     data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
-                    
+
                     try:
                         data_qubit = self.tanner_graph.vs.find(name=data_qubit_name)
                     except ValueError:
@@ -557,6 +629,13 @@ class CircuitBuilder:
                         data_qid = data_qubit.index
                         operated_qids.update({anc_qid, data_qid})
 
+                        # Track connection for classical controlled gates (superdense circuits)
+                        if track_connections and connections_dict is not None:
+                            if anc_qid not in connections_dict:
+                                connections_dict[anc_qid] = []
+                            if data_qid not in connections_dict[anc_qid]:
+                                connections_dict[anc_qid].append(data_qid)
+
                         if data_to_anc:
                             CX_target = [data_qid, anc_qid]
                         else:
@@ -568,7 +647,7 @@ class CircuitBuilder:
                     data_qubit_x = anc_qubit["face_x"] + offset[0]
                     data_qubit_y = anc_qubit["face_y"] + offset[1]
                     data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
-                    
+
                     try:
                         data_qubit = self.tanner_graph.vs.find(name=data_qubit_name)
                     except ValueError:
@@ -877,7 +956,9 @@ class CircuitBuilder:
     ) -> None:
         """Add final data qubit measurements and last detectors."""
         use_last_detectors = True
-        p_meas_final = 0 if self.perfect_logical_measurement else self._get_meas_rate("data")
+        p_meas_final = (
+            0 if self.perfect_logical_measurement else self._get_meas_rate("data")
+        )
 
         if self.circuit_type in {"tri", "rec", "growing", "cult+growing"}:
             circuit.append(f"M{self.temp_bdry_type}", self.data_qids, p_meas_final)
@@ -1083,7 +1164,9 @@ class CircuitBuilder:
         elif qubit_type == "anc_Z":
             return self.p_reset_anc_Z
         else:
-            raise ValueError(f"Invalid qubit_type '{qubit_type}'. Must be 'data', 'anc_X', or 'anc_Z'.")
+            raise ValueError(
+                f"Invalid qubit_type '{qubit_type}'. Must be 'data', 'anc_X', or 'anc_Z'."
+            )
 
     def _get_meas_rate(self, qubit_type: str) -> float:
         """
@@ -1110,7 +1193,9 @@ class CircuitBuilder:
         elif qubit_type == "anc_Z":
             return self.p_meas_anc_Z
         else:
-            raise ValueError(f"Invalid qubit_type '{qubit_type}'. Must be 'data', 'anc_X', or 'anc_Z'.")
+            raise ValueError(
+                f"Invalid qubit_type '{qubit_type}'. Must be 'data', 'anc_X', or 'anc_Z'."
+            )
 
     def _get_idle_rate_for_context(self, context: str) -> float:
         """

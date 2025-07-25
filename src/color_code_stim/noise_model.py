@@ -5,7 +5,7 @@ This module provides the NoiseModel class for systematic handling of noise
 parameters in color code quantum circuits.
 """
 
-from typing import Optional, Iterator, Tuple
+from typing import Optional, Iterator, Tuple, Self
 
 
 class NoiseModel:
@@ -14,6 +14,25 @@ class NoiseModel:
 
     This class encapsulates all noise parameters used in color code circuits,
     providing a clean interface for setting.
+
+
+    Examples
+    --------
+    Uniform circuit-level noise model:
+    >>> noise = NoiseModel.uniform_circuit_noise(0.001)
+    >>> print(noise['cnot'])  # 0.001
+
+    Code capacity noise model (depolarizing noise on data qubits before each round):
+    >>> noise = NoiseModel(depol=0.01)
+
+    Bit-flip noise on data qubits before each round:
+    >>> noise = NoiseModel(bitflip=0.01)
+
+    Phenomenological noise model:
+    >>> noise = NoiseModel(depol=0.01, meas=0.01)
+
+    Noise model with specific parameters:
+    >>> noise = NoiseModel(cnot=0.002, idle=0.001, reset=0.005, meas=0.003)
     """
 
     def __init__(
@@ -92,17 +111,6 @@ class NoiseModel:
         meas_anc_Z : float, optional
             Error rate for measurement operations on Z-type ancilla qubits (flipped outcome).
             If None (default), uses the meas parameter.
-
-        Examples
-        --------
-        >>> # Create noise model with specific parameters
-        >>> noise = NoiseModel(depol=0.001, cnot=0.002, meas=0.001)
-        >>> print(noise['depol'])  # 0.001
-        >>> noise['idle'] = 0.0005
-
-        >>> # Create uniform circuit-level noise
-        >>> noise = NoiseModel.uniform_circuit_noise(0.001)
-        >>> print(noise['cnot'])  # 0.001
         """
         # Store parameters in internal dict for easy access
         self._params = {
@@ -121,44 +129,44 @@ class NoiseModel:
             self._params["cult"] = float(cult)
         else:
             self._params["cult"] = None
-            
+
         if idle_during_cnot is not None:
             self._params["idle_during_cnot"] = float(idle_during_cnot)
         else:
             self._params["idle_during_cnot"] = None
-            
+
         if idle_during_meas is not None:
             self._params["idle_during_meas"] = float(idle_during_meas)
         else:
             self._params["idle_during_meas"] = None
-            
+
         # Handle granular reset parameters that can be None
         if reset_data is not None:
             self._params["reset_data"] = float(reset_data)
         else:
             self._params["reset_data"] = None
-            
+
         if reset_anc_X is not None:
             self._params["reset_anc_X"] = float(reset_anc_X)
         else:
             self._params["reset_anc_X"] = None
-            
+
         if reset_anc_Z is not None:
             self._params["reset_anc_Z"] = float(reset_anc_Z)
         else:
             self._params["reset_anc_Z"] = None
-            
+
         # Handle granular measurement parameters that can be None
         if meas_data is not None:
             self._params["meas_data"] = float(meas_data)
         else:
             self._params["meas_data"] = None
-            
+
         if meas_anc_X is not None:
             self._params["meas_anc_X"] = float(meas_anc_X)
         else:
             self._params["meas_anc_X"] = None
-            
+
         if meas_anc_Z is not None:
             self._params["meas_anc_Z"] = float(meas_anc_Z)
         else:
@@ -168,13 +176,10 @@ class NoiseModel:
         self.validate()
 
     @classmethod
-    def uniform_circuit_noise(cls, p_circuit: float) -> "NoiseModel":
+    def uniform_circuit_noise(cls, p_circuit: float) -> Self:
         """
-        Create noise model with uniform circuit-level noise.
-
-        This is equivalent to the original p_circuit parameter, where
-        reset, measurement, CNOT, and idle operations all have the same
-        error rate.
+        Create noise model with uniform circuit-level noise. Equivalent to:
+        >>> NoiseModel(reset=p_circuit, meas=p_circuit, cnot=p_circuit, idle=p_circuit)
 
         Parameters
         ----------
@@ -185,12 +190,6 @@ class NoiseModel:
         -------
         NoiseModel
             New noise model with uniform rates.
-
-        Examples
-        --------
-        >>> noise = NoiseModel.uniform_circuit_noise(0.001)
-        >>> noise['reset'] == noise['meas'] == noise['cnot'] == noise['idle']
-        True
         """
         return cls(
             bitflip=0.0,  # Not included in circuit-level noise
@@ -291,9 +290,17 @@ class NoiseModel:
 
         # Handle None values for special parameters
         if value is None:
-            if key in {"cult", "idle_during_cnot", "idle_during_meas", 
-                      "reset_data", "reset_anc_X", "reset_anc_Z",
-                      "meas_data", "meas_anc_X", "meas_anc_Z"}:
+            if key in {
+                "cult",
+                "idle_during_cnot",
+                "idle_during_meas",
+                "reset_data",
+                "reset_anc_X",
+                "reset_anc_Z",
+                "meas_data",
+                "meas_anc_X",
+                "meas_anc_Z",
+            }:
                 self._params[key] = None
                 return
             else:
@@ -316,8 +323,14 @@ class NoiseModel:
         elif key in {"idle_during_cnot", "idle_during_meas"}:
             # For idle context parameters, any explicit value (including 0) overrides idle
             self._params[key] = float_value
-        elif key in {"reset_data", "reset_anc_X", "reset_anc_Z", 
-                     "meas_data", "meas_anc_X", "meas_anc_Z"}:
+        elif key in {
+            "reset_data",
+            "reset_anc_X",
+            "reset_anc_Z",
+            "meas_data",
+            "meas_anc_X",
+            "meas_anc_Z",
+        }:
             # For granular reset/measurement parameters, any explicit value (including 0) overrides base parameter
             self._params[key] = float_value
         else:
@@ -384,9 +397,21 @@ class NoiseModel:
             If any parameter is negative.
         """
         for key, value in self._params.items():
-            if key in {"cult", "idle_during_cnot", "idle_during_meas",
-                      "reset_data", "reset_anc_X", "reset_anc_Z",
-                      "meas_data", "meas_anc_X", "meas_anc_Z"} and value is None:
+            if (
+                key
+                in {
+                    "cult",
+                    "idle_during_cnot",
+                    "idle_during_meas",
+                    "reset_data",
+                    "reset_anc_X",
+                    "reset_anc_Z",
+                    "meas_data",
+                    "meas_anc_X",
+                    "meas_anc_Z",
+                }
+                and value is None
+            ):
                 continue  # These parameters can be None
             if value < 0:
                 raise ValueError(
@@ -438,9 +463,21 @@ class NoiseModel:
         """
         param_strs = []
         for key, value in self._params.items():
-            if key in {"cult", "idle_during_cnot", "idle_during_meas",
-                      "reset_data", "reset_anc_X", "reset_anc_Z",
-                      "meas_data", "meas_anc_X", "meas_anc_Z"} and value is None:
+            if (
+                key
+                in {
+                    "cult",
+                    "idle_during_cnot",
+                    "idle_during_meas",
+                    "reset_data",
+                    "reset_anc_X",
+                    "reset_anc_Z",
+                    "meas_data",
+                    "meas_anc_X",
+                    "meas_anc_Z",
+                }
+                and value is None
+            ):
                 param_strs.append(f"{key}=None")
             else:
                 param_strs.append(f"{key}={value}")

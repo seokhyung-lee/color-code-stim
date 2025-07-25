@@ -126,6 +126,28 @@ colorcode = ColorCode(d=5, rounds=5, circuit_type="tri", noise_model=noise)
 - If None (default), parameters fall back to base `reset` or `meas` rates
 - Enables precise control over noise characteristics for different circuit elements
 
+### Superdense Syndrome Extraction
+The package supports superdense syndrome extraction circuits for enhanced quantum error correction:
+
+```python
+# Enable superdense syndrome extraction
+colorcode = ColorCode(
+    d=5,
+    rounds=5,
+    circuit_type="tri",
+    noise_model=noise,
+    superdense_circuit=True,           # Enable superdense mode
+    cnot_schedule="superdense_default" # Use superdense-optimized schedule
+)
+```
+
+**Key Features:**
+- **Classical Controlled Gates**: Implements measurement-based feedback using `CX` gates with `stim.target_rec()` targets
+- **4-Step Superdense Pattern**: X→Z anc CNOTs, data→anc CNOTs, anc→data CNOTs, repeat X→Z CNOTs
+- **Spatial Routing**: Data qubits connect to Z-type (x < face_x) or X-type (x > face_x) ancillae based on position
+- **Connection Tracking**: Automatically tracks Z-ancilla to data qubit connections for feedback control
+- **Simultaneous Extraction**: Enables simultaneous X and Z syndrome information extraction
+
 ### Comparative Decoding
 - Set `comparative_decoding=True` to run decoder multiple times across logical classes
 - Returns logical gap values for post-selection
@@ -159,6 +181,13 @@ The codebase has undergone modular refactoring with:
 - Moved DEM generation to DEMManager with caching
 - Created modular decoder architecture with BaseDecoder
 - Implemented equivalence testing for performance optimization
+
+### Superdense Circuit Implementation
+The CircuitBuilder now supports superdense syndrome extraction:
+- **Classical Controlled Gates**: Added after Z-type ancilla measurements using `circuit.append("CX", [stim.target_rec(-i), data_qid])`
+- **Connection Tracking**: Tracks Z-ancilla to data qubit connections during 4-step superdense sequence
+- **Spatial Routing Logic**: Determines ancilla type based on data qubit position relative to face center
+- **Backward Compatibility**: Only applies when `superdense_circuit=True`
 
 ### Testing and Validation
 - Test directory structure exists but may need population
