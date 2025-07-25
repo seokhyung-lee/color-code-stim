@@ -81,7 +81,7 @@ class TestNoiseModelDictionaryAccess:
         """Test keys() method."""
         noise = NoiseModel()
         keys = list(noise.keys())
-        expected_keys = ['bitflip', 'depol', 'reset', 'meas', 'cnot', 'idle', 'cult']
+        expected_keys = ['bitflip', 'depol', 'reset', 'meas', 'cnot', 'idle', 'initial_data_qubit_depol', 'cult']
         assert keys == expected_keys
     
     def test_values(self):
@@ -89,7 +89,7 @@ class TestNoiseModelDictionaryAccess:
         noise = NoiseModel(bitflip=0.001, depol=0.002, cnot=0.003)
         values = list(noise.values())
         # cult should default to cnot value
-        expected_values = [0.001, 0.002, 0.0, 0.0, 0.003, 0.0, 0.003]
+        expected_values = [0.001, 0.002, 0.0, 0.0, 0.003, 0.0, 0.0, 0.003]
         assert values == expected_values
     
     def test_items(self):
@@ -223,3 +223,57 @@ class TestNoiseModelIntegration:
         # Test cult=None defaulting to cnot
         noise3 = NoiseModel(cnot=0.004, cult=None)
         assert noise3['cult'] == 0.004
+
+
+class TestInitialDataQubitDepol:
+    """Test initial_data_qubit_depol parameter functionality."""
+    
+    def test_default_value(self):
+        """Test that initial_data_qubit_depol defaults to 0.0."""
+        noise = NoiseModel()
+        assert noise['initial_data_qubit_depol'] == 0.0
+    
+    def test_explicit_value(self):
+        """Test setting explicit value for initial_data_qubit_depol."""
+        noise = NoiseModel(initial_data_qubit_depol=0.005)
+        assert noise['initial_data_qubit_depol'] == 0.005
+    
+    def test_dictionary_access(self):
+        """Test dictionary-like access and modification."""
+        noise = NoiseModel()
+        noise['initial_data_qubit_depol'] = 0.003
+        assert noise['initial_data_qubit_depol'] == 0.003
+    
+    def test_in_uniform_circuit_noise(self):
+        """Test that uniform_circuit_noise excludes initial_data_qubit_depol."""
+        noise = NoiseModel.uniform_circuit_noise(0.001)
+        assert noise['initial_data_qubit_depol'] == 0.0
+        
+        # Other circuit-level parameters should be set
+        assert noise['cnot'] == 0.001
+        assert noise['reset'] == 0.001
+        assert noise['meas'] == 0.001
+        assert noise['idle'] == 0.001
+    
+    def test_negative_value_validation(self):
+        """Test that negative values raise ValueError."""
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(initial_data_qubit_depol=-0.001)
+    
+    def test_negative_value_setitem(self):
+        """Test that setting negative values raises ValueError."""
+        noise = NoiseModel()
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['initial_data_qubit_depol'] = -0.005
+    
+    def test_combination_with_other_parameters(self):
+        """Test initial_data_qubit_depol in combination with other parameters."""
+        noise = NoiseModel(
+            cnot=0.002,
+            meas=0.001,
+            initial_data_qubit_depol=0.0005
+        )
+        assert noise['cnot'] == 0.002
+        assert noise['meas'] == 0.001
+        assert noise['initial_data_qubit_depol'] == 0.0005
+        assert noise['depol'] == 0.0  # Should remain default

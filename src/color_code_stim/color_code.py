@@ -79,9 +79,9 @@ class ColorCode:
         cnot_schedule: Union[str, List[int]] = "tri_optimal",
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         noise_model: Optional[NoiseModel] = None,
-        perfect_init_final: bool = False,
         perfect_logical_initialization: bool = False,
         perfect_logical_measurement: bool = False,
+        perfect_init_final: bool = False,
         perfect_first_syndrome_extraction: bool = False,
         comparative_decoding: bool = False,
         exclude_non_essential_pauli_detectors: bool = False,
@@ -106,7 +106,7 @@ class ColorCode:
 
         Examples
         --------
-        Basic usage with NoiseModel:
+        Triangular patch with uniform circuit-level noise of 1e-3:
 
         >>> from color_code_stim import ColorCode, NoiseModel
         >>> noise = NoiseModel.uniform_circuit_noise(1e-3)
@@ -176,19 +176,18 @@ class ColorCode:
             individual noise parameters (p_bitflip, p_depol, etc.) are ignored.
             If not provided, a NoiseModel is constructed from individual parameters.
 
-        perfect_init_final : bool, default False
-            Whether to assume logical initialization and final measurement are noiseless.
-            For backward compatibility. If True, sets both perfect_logical_initialization
-            and perfect_logical_measurement to True.
         perfect_logical_initialization : bool, default False
             Whether logical initialization operations (data qubit reset) are noiseless
         perfect_logical_measurement : bool, default False
             Whether logical final measurement operations are noiseless
+        perfect_init_final : bool, default False
+            If True, sets both perfect_logical_initialization and perfect_logical_measurement
+            to True.
         perfect_first_syndrome_extraction : bool, default False
             Whether the first syndrome extraction round is noiseless. Useful when
             starting from a perfect logical state (together with
             `perfect_logical_initialization=True`).
-            *Note:* `rounds` still includes this perfect round, so set to `T + 1` where 
+            *Note:* `rounds` still includes this perfect round, so set to `T + 1` where
             `T` is the number of actual faulty syndrome extraction rounds you want to consider.
         comparative_decoding : bool, default False
             Whether to use the comparative decoding technique. If True, observables are
@@ -213,11 +212,10 @@ class ColorCode:
             Whether to remove error mechanisms that are not edge-like when decomposing
             the detector error model.
 
-        Parameters (deprecated)
+        Parameters (legacy for backward compatibility)
         ----------
         shape: str, optional
-            Same as `circuit_type` for backward compatability. If given, it is
-            prioritized over `circuit_type`.
+            Same as `circuit_type`. If given, prioritized over `circuit_type`.
         p_bitflip : float, default 0
             Bit-flip noise on every data qubit at the start of each round.
             Ignored if noise_model is provided.

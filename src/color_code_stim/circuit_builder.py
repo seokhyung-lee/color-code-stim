@@ -106,6 +106,7 @@ class CircuitBuilder:
         self.p_meas = noise_model["meas"]
         self.p_cnot = noise_model["cnot"]
         self.p_idle = noise_model["idle"]
+        self.p_initial_data_qubit_depol = noise_model["initial_data_qubit_depol"]
 
         # Extract qubit groups
         self.data_qubits = qubit_groups["data"]
@@ -155,11 +156,20 @@ class CircuitBuilder:
         # Add data qubit initialization
         self._add_data_qubit_initialization(circuit, red_links, data_q1s, data_q2s)
 
+        # Add initial data qubit depolarizing noise if perfect_first_syndrome_extraction=False
+        if not self.perfect_first_syndrome_extraction:
+            self._add_initial_data_qubit_depol(circuit)
+
         # Add ancilla qubit initialization
         self._add_ancilla_initialization(circuit)
 
         # Add main syndrome extraction rounds
         circuit += synd_extr_circuits[0]
+
+        # Add initial data qubit depolarizing noise if perfect_first_syndrome_extraction=True
+        if self.perfect_first_syndrome_extraction:
+            self._add_initial_data_qubit_depol(circuit)
+
         circuit += synd_extr_circuits[1] * (self.rounds - 1)
 
         # Add final measurements and detectors
@@ -171,6 +181,21 @@ class CircuitBuilder:
         self._add_logical_observables(circuit, obs_included_lookbacks)
 
         return circuit
+
+    def _add_initial_data_qubit_depol(self, circuit: stim.Circuit) -> None:
+        """
+        Add initial data qubit depolarizing noise.
+        
+        Timing depends on perfect_first_syndrome_extraction:
+        - If True: Applied after first syndrome extraction round
+        - If False: Applied after data qubit initialization
+        """
+        if self.p_initial_data_qubit_depol > 0:
+            circuit.append(
+                "DEPOLARIZE1", 
+                self.data_qids, 
+                self.p_initial_data_qubit_depol
+            )
 
     def _identify_red_links(
         self,

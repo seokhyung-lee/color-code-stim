@@ -14,35 +14,6 @@ class NoiseModel:
 
     This class encapsulates all noise parameters used in color code circuits,
     providing a clean interface for setting.
-
-    Parameters
-    ----------
-    bitflip : float, default 0.0
-        Bit-flip noise rate on data qubits at the start of each round.
-    depol : float, default 0.0
-        Depolarizing noise rate on data qubits at the start of each round.
-    reset : float, default 0.0
-        Error rate for reset operations (producing orthogonal state).
-    meas : float, default 0.0
-        Error rate for measurement operations (flipped outcome).
-    cnot : float, default 0.0
-        Two-qubit depolarizing noise rate for CNOT gates.
-    idle : float, default 0.0
-        Single-qubit depolarizing noise rate for idle operations.
-    cult : float, optional
-        Physical error rate during cultivation (for cult+growing circuits).
-        If not provided, defaults to cnot rate when needed.
-
-    Examples
-    --------
-    >>> # Create noise model with specific parameters
-    >>> noise = NoiseModel(depol=0.001, cnot=0.002, meas=0.001)
-    >>> print(noise['depol'])  # 0.001
-    >>> noise['idle'] = 0.0005
-
-    >>> # Create uniform circuit-level noise
-    >>> noise = NoiseModel.uniform_circuit_noise(0.001)
-    >>> print(noise['cnot'])  # 0.001
     """
 
     def __init__(
@@ -54,11 +25,45 @@ class NoiseModel:
         cnot: float = 0.0,
         idle: float = 0.0,
         cult: Optional[float] = None,
+        initial_data_qubit_depol: float = 0.0,
     ):
         """
         Initialize noise model with individual parameters.
 
         All parameters must be non-negative floats representing error rates.
+
+        Parameters
+        ----------
+        bitflip : float, default 0.0
+            Bit-flip noise rate on data qubits at the start of each round.
+        depol : float, default 0.0
+            Depolarizing noise rate on data qubits at the start of each round.
+        reset : float, default 0.0
+            Error rate for reset operations (producing orthogonal state).
+        meas : float, default 0.0
+            Error rate for measurement operations (flipped outcome).
+        cnot : float, default 0.0
+            Two-qubit depolarizing noise rate for CNOT gates.
+        idle : float, default 0.0
+            Single-qubit depolarizing noise rate for idle operations.
+        cult : float, optional
+            Physical error rate during cultivation (for cult+growing circuits).
+            If not provided, defaults to cnot rate when needed.
+        initial_data_qubit_depol : float, default 0.0
+            Depolarizing noise rate applied to all data qubits after the first
+            syndrome extraction round (if perfect_first_syndrome_extraction=True)
+            or after data qubit initialization (if perfect_first_syndrome_extraction=False).
+
+        Examples
+        --------
+        >>> # Create noise model with specific parameters
+        >>> noise = NoiseModel(depol=0.001, cnot=0.002, meas=0.001)
+        >>> print(noise['depol'])  # 0.001
+        >>> noise['idle'] = 0.0005
+
+        >>> # Create uniform circuit-level noise
+        >>> noise = NoiseModel.uniform_circuit_noise(0.001)
+        >>> print(noise['cnot'])  # 0.001
         """
         # Store parameters in internal dict for easy access
         self._params = {
@@ -68,6 +73,7 @@ class NoiseModel:
             "meas": float(meas),
             "cnot": float(cnot),
             "idle": float(idle),
+            "initial_data_qubit_depol": float(initial_data_qubit_depol),
         }
 
         # Handle cultivation noise separately since it can be None
@@ -112,6 +118,7 @@ class NoiseModel:
             cnot=p_circuit,
             idle=p_circuit,
             cult=None,  # Will default to cnot when needed
+            initial_data_qubit_depol=0.0,  # Not included in circuit-level noise
         )
 
     def __getitem__(self, key: str) -> float:

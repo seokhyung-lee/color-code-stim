@@ -103,13 +103,25 @@ num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 ```python
 # Create custom noise model
 noise = NoiseModel(
-    bitflip=0.0,      # Bit-flip errors on data qubits
-    depol=0.001,      # Depolarizing errors on data qubits  
-    reset=0.0005,     # Reset operation errors
-    meas=0.001,       # Measurement errors
-    cnot=0.002,       # CNOT gate errors
-    idle=0.0005,      # Idle operation errors
-    cult=0.002        # Cultivation errors (cult+growing only)
+    bitflip=0.0,                    # Bit-flip errors on data qubits
+    depol=0.001,                    # Depolarizing errors on data qubits  
+    reset=0.0005,                   # Reset operation errors
+    meas=0.001,                     # Measurement errors
+    cnot=0.002,                     # CNOT gate errors
+    idle=0.0005,                    # Idle operation errors
+    cult=0.002,                     # Cultivation errors (cult+growing only)
+    initial_data_qubit_depol=0.001  # Initial depolarizing errors on data qubits
+)
+
+# Initial data qubit depolarizing noise timing:
+# - If perfect_first_syndrome_extraction=True: Applied after first syndrome extraction round
+# - If perfect_first_syndrome_extraction=False: Applied after data qubit initialization
+colorcode = ColorCode(
+    d=5,
+    rounds=5,
+    circuit_type="tri",
+    noise_model=noise,
+    perfect_first_syndrome_extraction=True  # Controls timing of initial_data_qubit_depol
 )
 
 # Access and modify parameters
