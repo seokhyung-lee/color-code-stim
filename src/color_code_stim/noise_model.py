@@ -26,6 +26,7 @@ class NoiseModel:
         idle: float = 0.0,
         cult: Optional[float] = None,
         initial_data_qubit_depol: float = 0.0,
+        depol1_after_cnot: float = 0.0,
     ):
         """
         Initialize noise model with individual parameters.
@@ -53,6 +54,10 @@ class NoiseModel:
             Depolarizing noise rate applied to all data qubits after the first
             syndrome extraction round (if perfect_first_syndrome_extraction=True)
             or after data qubit initialization (if perfect_first_syndrome_extraction=False).
+        depol1_after_cnot : float, default 0.0
+            Single-qubit depolarizing noise rate applied to each qubit participating
+            in CNOT gates after the gates are applied. If provided and positive,
+            DEPOLARIZE1 is added for each qubit involved in the CNOT operations.
 
         Examples
         --------
@@ -74,6 +79,7 @@ class NoiseModel:
             "cnot": float(cnot),
             "idle": float(idle),
             "initial_data_qubit_depol": float(initial_data_qubit_depol),
+            "depol1_after_cnot": float(depol1_after_cnot),
         }
 
         # Handle cultivation noise separately since it can be None
@@ -119,6 +125,7 @@ class NoiseModel:
             idle=p_circuit,
             cult=None,  # Will default to cnot when needed
             initial_data_qubit_depol=0.0,  # Not included in circuit-level noise
+            depol1_after_cnot=0.0,  # Not included in circuit-level noise
         )
 
     def __getitem__(self, key: str) -> float:

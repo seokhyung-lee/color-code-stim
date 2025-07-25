@@ -110,12 +110,18 @@ noise = NoiseModel(
     cnot=0.002,                     # CNOT gate errors
     idle=0.0005,                    # Idle operation errors
     cult=0.002,                     # Cultivation errors (cult+growing only)
-    initial_data_qubit_depol=0.001  # Initial depolarizing errors on data qubits
+    initial_data_qubit_depol=0.001, # Initial depolarizing errors on data qubits
+    depol1_after_cnot=0.0005        # Single-qubit depolarizing noise after CNOT gates
 )
 
 # Initial data qubit depolarizing noise timing:
 # - If perfect_first_syndrome_extraction=True: Applied after first syndrome extraction round
 # - If perfect_first_syndrome_extraction=False: Applied after data qubit initialization
+
+# Single-qubit depolarizing noise after CNOT gates:
+# - Applied to each qubit participating in CNOT operations after the gates are applied
+# - If perfect_first_syndrome_extraction=True: Skipped during the first syndrome extraction round
+# - If perfect_logical_measurement=True: Skipped during final measurement operations
 colorcode = ColorCode(
     d=5,
     rounds=5,

@@ -81,7 +81,7 @@ class TestNoiseModelDictionaryAccess:
         """Test keys() method."""
         noise = NoiseModel()
         keys = list(noise.keys())
-        expected_keys = ['bitflip', 'depol', 'reset', 'meas', 'cnot', 'idle', 'initial_data_qubit_depol', 'cult']
+        expected_keys = ['bitflip', 'depol', 'reset', 'meas', 'cnot', 'idle', 'initial_data_qubit_depol', 'depol1_after_cnot', 'cult']
         assert keys == expected_keys
     
     def test_values(self):
@@ -89,7 +89,7 @@ class TestNoiseModelDictionaryAccess:
         noise = NoiseModel(bitflip=0.001, depol=0.002, cnot=0.003)
         values = list(noise.values())
         # cult should default to cnot value
-        expected_values = [0.001, 0.002, 0.0, 0.0, 0.003, 0.0, 0.0, 0.003]
+        expected_values = [0.001, 0.002, 0.0, 0.0, 0.003, 0.0, 0.0, 0.0, 0.003]
         assert values == expected_values
     
     def test_items(self):

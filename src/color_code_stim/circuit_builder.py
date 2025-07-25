@@ -107,6 +107,7 @@ class CircuitBuilder:
         self.p_cnot = noise_model["cnot"]
         self.p_idle = noise_model["idle"]
         self.p_initial_data_qubit_depol = noise_model["initial_data_qubit_depol"]
+        self.p_depol1_after_cnot = noise_model["depol1_after_cnot"]
 
         # Extract qubit groups
         self.data_qubits = qubit_groups["data"]
@@ -380,6 +381,9 @@ class CircuitBuilder:
             synd_extr_circuit.append("CX", CX_targets)
             if self.p_cnot > 0 and not perfect_round:
                 synd_extr_circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
+            
+            # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
+            self._apply_depol1_after_cnot(synd_extr_circuit, CX_targets, perfect_round)
 
             if self.p_idle > 0 and not perfect_round:
                 idling_qids = list(self.all_qids_set - operated_qids)
@@ -575,6 +579,8 @@ class CircuitBuilder:
             circuit.append("CX", red_links.ravel())
             if self.p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), self.p_cnot)
+            # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
+            self._apply_depol1_after_cnot(circuit, red_links.ravel())
 
         elif self.circuit_type == "growing":
             # Data qubits inside the initial patch
@@ -596,6 +602,8 @@ class CircuitBuilder:
             circuit.append("CX", red_links.ravel())
             if self.p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), self.p_cnot)
+            # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
+            self._apply_depol1_after_cnot(circuit, red_links.ravel())
 
         elif self.circuit_type == "cult+growing":
             # Find last tick position
@@ -625,6 +633,8 @@ class CircuitBuilder:
             circuit.append("CX", red_links.ravel())
             if self.p_cnot > 0:
                 circuit.append("DEPOLARIZE2", red_links.ravel(), self.p_cnot)
+            # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
+            self._apply_depol1_after_cnot(circuit, red_links.ravel())
 
         else:
             raise NotImplementedError
@@ -710,6 +720,9 @@ class CircuitBuilder:
         circuit.append("CX", red_links.ravel())
         if self.p_cnot > 0 and not self.perfect_logical_measurement:
             circuit.append("DEPOLARIZE2", red_links.ravel(), self.p_cnot)
+        # Apply single-qubit depolarizing noise to each qubit involved in CNOT gates
+        # Use perfect_logical_measurement flag to determine if noise should be skipped
+        self._apply_depol1_after_cnot(circuit, red_links.ravel(), self.perfect_logical_measurement)
 
         circuit.append("TICK")
 
@@ -787,6 +800,31 @@ class CircuitBuilder:
         circuit.append("OBSERVABLE_INCLUDE", target, 1)
         if self.comparative_decoding:
             raise NotImplementedError
+
+    def _apply_depol1_after_cnot(
+        self, circuit: stim.Circuit, CX_targets: list, perfect_round: bool = False
+    ) -> None:
+        """
+        Apply single-qubit depolarizing noise to each qubit involved in CNOT gates.
+        
+        Parameters
+        ----------
+        circuit : stim.Circuit
+            Circuit to add noise to.
+        CX_targets : list
+            List of CNOT targets in the format [control, target, control2, target2, ...].
+        perfect_round : bool, default False
+            If True, skip noise application for perfect syndrome extraction rounds.
+        """
+        if self.p_depol1_after_cnot == 0 or perfect_round:
+            return
+            
+        # Extract unique qubits from CX_targets
+        # CX_targets format: [control1, target1, control2, target2, ...]
+        unique_qubits = list(set(CX_targets))
+        
+        if unique_qubits:
+            circuit.append("DEPOLARIZE1", unique_qubits, self.p_depol1_after_cnot)
 
     def _add_logical_observables(
         self, circuit: stim.Circuit, obs_included_lookbacks: Set
