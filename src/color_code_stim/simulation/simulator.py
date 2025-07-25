@@ -106,8 +106,6 @@ class Simulator:
 
         return det, obs, err
 
-
-
     def simulate(
         self,
         shots: int,

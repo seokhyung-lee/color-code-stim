@@ -140,7 +140,7 @@ class TannerGraphBuilder:
                         # Calculate ancilla qubit coordinates
                         anc_x = x - 1 if pauli == "Z" else x + 1
                         self.tanner_graph.add_vertex(
-                            name=f"{x}-{y}-{pauli}",
+                            name=f"{anc_x}-{y}-{pauli}",
                             x=anc_x,
                             y=y,
                             face_x=x,
@@ -204,7 +204,7 @@ class TannerGraphBuilder:
                         # Calculate ancilla qubit coordinates
                         anc_x = x - 1 if pauli == "Z" else x + 1
                         self.tanner_graph.add_vertex(
-                            name=f"{x}-{y}-{pauli}",
+                            name=f"{anc_x}-{y}-{pauli}",
                             x=anc_x,
                             y=y,
                             face_x=x,
@@ -297,7 +297,7 @@ class TannerGraphBuilder:
                         # Calculate ancilla qubit coordinates
                         anc_x = x - 1 if pauli == "Z" else x + 1
                         self.tanner_graph.add_vertex(
-                            name=f"{x}-{y}-{pauli}",
+                            name=f"{anc_x}-{y}-{pauli}",
                             x=anc_x,
                             y=y,
                             face_x=x,
