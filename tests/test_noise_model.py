@@ -359,3 +359,285 @@ class TestIdleContextParameters:
         assert noise['idle'] == 0.001
         assert noise['idle_during_cnot'] == 0.0005
         assert noise['idle_during_meas'] == 0.0015
+
+
+class TestGranularResetParameters:
+    """Test granular reset parameter functionality."""
+    
+    def test_default_fallback_behavior(self):
+        """Test that granular reset parameters default to reset when None."""
+        noise = NoiseModel(reset=0.003)
+        assert noise['reset_data'] == 0.003  # Falls back to reset
+        assert noise['reset_anc_X'] == 0.003  # Falls back to reset
+        assert noise['reset_anc_Z'] == 0.003  # Falls back to reset
+    
+    def test_explicit_override_behavior(self):
+        """Test that explicit values override reset parameter."""
+        noise = NoiseModel(
+            reset=0.002,
+            reset_data=0.005,
+            reset_anc_X=0.001,
+            reset_anc_Z=0.004
+        )
+        assert noise['reset'] == 0.002
+        assert noise['reset_data'] == 0.005  # Overrides reset
+        assert noise['reset_anc_X'] == 0.001  # Overrides reset
+        assert noise['reset_anc_Z'] == 0.004  # Overrides reset
+    
+    def test_zero_override_behavior(self):
+        """Test that setting to 0 overrides reset parameter."""
+        noise = NoiseModel(reset=0.002)
+        noise['reset_data'] = 0.0  # Explicit 0 overrides reset
+        noise['reset_anc_X'] = 0.0  # Explicit 0 overrides reset
+        
+        assert noise['reset'] == 0.002
+        assert noise['reset_data'] == 0.0  # Overridden to 0
+        assert noise['reset_anc_X'] == 0.0  # Overridden to 0
+        assert noise['reset_anc_Z'] == 0.002  # Still falls back to reset
+    
+    def test_none_assignment_fallback(self):
+        """Test that setting to None restores fallback behavior."""
+        noise = NoiseModel(reset=0.003, reset_data=0.005)
+        assert noise['reset_data'] == 0.005  # Explicit value
+        
+        noise['reset_data'] = None  # Reset to fallback
+        assert noise['reset_data'] == 0.003  # Now falls back to reset
+    
+    def test_negative_value_validation(self):
+        """Test that negative values raise ValueError."""
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(reset_data=-0.001)
+        
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(reset_anc_X=-0.001)
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(reset_anc_Z=-0.001)
+    
+    def test_negative_setitem_validation(self):
+        """Test that setting negative values raises ValueError."""
+        noise = NoiseModel()
+        
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['reset_data'] = -0.005
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['reset_anc_X'] = -0.005
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['reset_anc_Z'] = -0.005
+    
+    def test_in_uniform_circuit_noise(self):
+        """Test that uniform_circuit_noise excludes granular reset parameters."""
+        noise = NoiseModel.uniform_circuit_noise(0.001)
+        assert noise['reset_data'] == 0.001  # Falls back to reset
+        assert noise['reset_anc_X'] == 0.001  # Falls back to reset
+        assert noise['reset_anc_Z'] == 0.001  # Falls back to reset
+        
+        # Internal storage should still be None
+        assert noise._params['reset_data'] is None
+        assert noise._params['reset_anc_X'] is None
+        assert noise._params['reset_anc_Z'] is None
+
+
+class TestGranularMeasParameters:
+    """Test granular measurement parameter functionality."""
+    
+    def test_default_fallback_behavior(self):
+        """Test that granular measurement parameters default to meas when None."""
+        noise = NoiseModel(meas=0.003)
+        assert noise['meas_data'] == 0.003  # Falls back to meas
+        assert noise['meas_anc_X'] == 0.003  # Falls back to meas
+        assert noise['meas_anc_Z'] == 0.003  # Falls back to meas
+    
+    def test_explicit_override_behavior(self):
+        """Test that explicit values override meas parameter."""
+        noise = NoiseModel(
+            meas=0.002,
+            meas_data=0.005,
+            meas_anc_X=0.001,
+            meas_anc_Z=0.004
+        )
+        assert noise['meas'] == 0.002
+        assert noise['meas_data'] == 0.005  # Overrides meas
+        assert noise['meas_anc_X'] == 0.001  # Overrides meas
+        assert noise['meas_anc_Z'] == 0.004  # Overrides meas
+    
+    def test_zero_override_behavior(self):
+        """Test that setting to 0 overrides meas parameter."""
+        noise = NoiseModel(meas=0.002)
+        noise['meas_data'] = 0.0  # Explicit 0 overrides meas
+        noise['meas_anc_X'] = 0.0  # Explicit 0 overrides meas
+        
+        assert noise['meas'] == 0.002
+        assert noise['meas_data'] == 0.0  # Overridden to 0
+        assert noise['meas_anc_X'] == 0.0  # Overridden to 0
+        assert noise['meas_anc_Z'] == 0.002  # Still falls back to meas
+    
+    def test_none_assignment_fallback(self):
+        """Test that setting to None restores fallback behavior."""
+        noise = NoiseModel(meas=0.003, meas_data=0.005)
+        assert noise['meas_data'] == 0.005  # Explicit value
+        
+        noise['meas_data'] = None  # Reset to fallback
+        assert noise['meas_data'] == 0.003  # Now falls back to meas
+    
+    def test_negative_value_validation(self):
+        """Test that negative values raise ValueError."""
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(meas_data=-0.001)
+        
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(meas_anc_X=-0.001)
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            NoiseModel(meas_anc_Z=-0.001)
+    
+    def test_negative_setitem_validation(self):
+        """Test that setting negative values raises ValueError."""
+        noise = NoiseModel()
+        
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['meas_data'] = -0.005
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['meas_anc_X'] = -0.005
+            
+        with pytest.raises(ValueError, match="must be non-negative"):
+            noise['meas_anc_Z'] = -0.005
+    
+    def test_in_uniform_circuit_noise(self):
+        """Test that uniform_circuit_noise excludes granular meas parameters."""
+        noise = NoiseModel.uniform_circuit_noise(0.001)
+        assert noise['meas_data'] == 0.001  # Falls back to meas
+        assert noise['meas_anc_X'] == 0.001  # Falls back to meas
+        assert noise['meas_anc_Z'] == 0.001  # Falls back to meas
+        
+        # Internal storage should still be None
+        assert noise._params['meas_data'] is None
+        assert noise._params['meas_anc_X'] is None
+        assert noise._params['meas_anc_Z'] is None
+
+
+class TestGranularParametersIntegration:
+    """Test integration scenarios for granular reset/measurement parameters."""
+    
+    def test_comprehensive_granular_setup(self):
+        """Test setting up comprehensive granular noise control."""
+        noise = NoiseModel(
+            reset=0.001,        # Base reset rate
+            meas=0.002,         # Base measurement rate
+            reset_data=0.005,   # Override for data qubit resets
+            reset_anc_X=0.0008, # Override for X-type ancilla resets
+            meas_anc_Z=0.003,   # Override for Z-type ancilla measurements
+            # reset_anc_Z and meas_data, meas_anc_X should fall back to base rates
+        )
+        
+        # Check base rates
+        assert noise['reset'] == 0.001
+        assert noise['meas'] == 0.002
+        
+        # Check overridden rates
+        assert noise['reset_data'] == 0.005
+        assert noise['reset_anc_X'] == 0.0008
+        assert noise['meas_anc_Z'] == 0.003
+        
+        # Check fallback rates
+        assert noise['reset_anc_Z'] == 0.001  # Falls back to reset
+        assert noise['meas_data'] == 0.002    # Falls back to meas
+        assert noise['meas_anc_X'] == 0.002   # Falls back to meas
+    
+    def test_all_granular_parameters_explicit(self):
+        """Test setting all granular parameters explicitly."""
+        noise = NoiseModel(
+            reset=0.001,
+            meas=0.002,
+            reset_data=0.003,
+            reset_anc_X=0.004,
+            reset_anc_Z=0.005,
+            meas_data=0.006,
+            meas_anc_X=0.007,
+            meas_anc_Z=0.008
+        )
+        
+        # All should use explicit values
+        assert noise['reset_data'] == 0.003
+        assert noise['reset_anc_X'] == 0.004
+        assert noise['reset_anc_Z'] == 0.005
+        assert noise['meas_data'] == 0.006
+        assert noise['meas_anc_X'] == 0.007
+        assert noise['meas_anc_Z'] == 0.008
+    
+    def test_backward_compatibility(self):
+        """Test that existing code without granular parameters works unchanged."""
+        # Old style - should work exactly as before
+        noise = NoiseModel(reset=0.001, meas=0.002, cnot=0.003)
+        
+        # All granular parameters should fall back to base parameters
+        assert noise['reset_data'] == 0.001
+        assert noise['reset_anc_X'] == 0.001
+        assert noise['reset_anc_Z'] == 0.001
+        assert noise['meas_data'] == 0.002
+        assert noise['meas_anc_X'] == 0.002
+        assert noise['meas_anc_Z'] == 0.002
+    
+    def test_mixed_granular_and_context_parameters(self):
+        """Test mixing granular parameters with context parameters."""
+        noise = NoiseModel(
+            reset=0.001,
+            meas=0.002,
+            idle=0.0005,
+            reset_data=0.003,
+            meas_anc_X=0.004,
+            idle_during_cnot=0.0008,
+        )
+        
+        # All parameters should work independently
+        assert noise['reset_data'] == 0.003
+        assert noise['reset_anc_X'] == 0.001  # Falls back to reset
+        assert noise['meas_anc_X'] == 0.004
+        assert noise['meas_data'] == 0.002    # Falls back to meas
+        assert noise['idle_during_cnot'] == 0.0008
+        assert noise['idle_during_meas'] == 0.0005  # Falls back to idle
+    
+    def test_uniform_circuit_noise_granular_fallback(self):
+        """Test that uniform_circuit_noise properly handles granular fallback."""
+        p = 0.001
+        noise = NoiseModel.uniform_circuit_noise(p)
+        
+        # All granular parameters should fall back to uniform circuit level
+        assert noise['reset_data'] == p
+        assert noise['reset_anc_X'] == p
+        assert noise['reset_anc_Z'] == p
+        assert noise['meas_data'] == p
+        assert noise['meas_anc_X'] == p
+        assert noise['meas_anc_Z'] == p
+        
+        # But internal storage should still be None for granular parameters
+        assert noise._params['reset_data'] is None
+        assert noise._params['meas_data'] is None
+    
+    def test_keys_includes_granular_parameters(self):
+        """Test that keys() method includes all granular parameters."""
+        noise = NoiseModel()
+        keys = list(noise.keys())
+        
+        # Should include all granular parameters
+        assert 'reset_data' in keys
+        assert 'reset_anc_X' in keys
+        assert 'reset_anc_Z' in keys
+        assert 'meas_data' in keys
+        assert 'meas_anc_X' in keys
+        assert 'meas_anc_Z' in keys
+    
+    def test_values_respects_granular_fallback(self):
+        """Test that values() method respects granular parameter fallback."""
+        noise = NoiseModel(reset=0.001, meas=0.002, reset_data=0.003)
+        values = list(noise.values())
+        
+        # reset_data should be 0.003, others should fall back
+        reset_data_idx = list(noise.keys()).index('reset_data')
+        reset_anc_X_idx = list(noise.keys()).index('reset_anc_X')
+        
+        assert values[reset_data_idx] == 0.003  # Explicit value
+        assert values[reset_anc_X_idx] == 0.001  # Falls back to reset

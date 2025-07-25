@@ -29,6 +29,12 @@ class NoiseModel:
         depol1_after_cnot: float = 0.0,
         idle_during_cnot: Optional[float] = None,
         idle_during_meas: Optional[float] = None,
+        reset_data: Optional[float] = None,
+        reset_anc_X: Optional[float] = None,
+        reset_anc_Z: Optional[float] = None,
+        meas_data: Optional[float] = None,
+        meas_anc_X: Optional[float] = None,
+        meas_anc_Z: Optional[float] = None,
     ):
         """
         Initialize noise model with individual parameters.
@@ -68,6 +74,24 @@ class NoiseModel:
             Single-qubit depolarizing noise rate for idle qubits during measurement operations.
             If None (default), uses the idle parameter. If set to any value (including 0),
             overrides idle for qubits not participating in measurement operations.
+        reset_data : float, optional
+            Error rate for reset operations on data qubits (producing orthogonal state).
+            If None (default), uses the reset parameter.
+        reset_anc_X : float, optional
+            Error rate for reset operations on X-type ancilla qubits (producing orthogonal state).
+            If None (default), uses the reset parameter.
+        reset_anc_Z : float, optional
+            Error rate for reset operations on Z-type ancilla qubits (producing orthogonal state).
+            If None (default), uses the reset parameter.
+        meas_data : float, optional
+            Error rate for measurement operations on data qubits (flipped outcome).
+            If None (default), uses the meas parameter.
+        meas_anc_X : float, optional
+            Error rate for measurement operations on X-type ancilla qubits (flipped outcome).
+            If None (default), uses the meas parameter.
+        meas_anc_Z : float, optional
+            Error rate for measurement operations on Z-type ancilla qubits (flipped outcome).
+            If None (default), uses the meas parameter.
 
         Examples
         --------
@@ -107,6 +131,38 @@ class NoiseModel:
             self._params["idle_during_meas"] = float(idle_during_meas)
         else:
             self._params["idle_during_meas"] = None
+            
+        # Handle granular reset parameters that can be None
+        if reset_data is not None:
+            self._params["reset_data"] = float(reset_data)
+        else:
+            self._params["reset_data"] = None
+            
+        if reset_anc_X is not None:
+            self._params["reset_anc_X"] = float(reset_anc_X)
+        else:
+            self._params["reset_anc_X"] = None
+            
+        if reset_anc_Z is not None:
+            self._params["reset_anc_Z"] = float(reset_anc_Z)
+        else:
+            self._params["reset_anc_Z"] = None
+            
+        # Handle granular measurement parameters that can be None
+        if meas_data is not None:
+            self._params["meas_data"] = float(meas_data)
+        else:
+            self._params["meas_data"] = None
+            
+        if meas_anc_X is not None:
+            self._params["meas_anc_X"] = float(meas_anc_X)
+        else:
+            self._params["meas_anc_X"] = None
+            
+        if meas_anc_Z is not None:
+            self._params["meas_anc_Z"] = float(meas_anc_Z)
+        else:
+            self._params["meas_anc_Z"] = None
 
         # Validate all parameters
         self.validate()
@@ -148,6 +204,12 @@ class NoiseModel:
             depol1_after_cnot=0.0,  # Not included in circuit-level noise
             idle_during_cnot=None,  # Not included in circuit-level noise
             idle_during_meas=None,  # Not included in circuit-level noise
+            reset_data=None,  # Will default to reset when needed
+            reset_anc_X=None,  # Will default to reset when needed
+            reset_anc_Z=None,  # Will default to reset when needed
+            meas_data=None,  # Will default to meas when needed
+            meas_anc_X=None,  # Will default to meas when needed
+            meas_anc_Z=None,  # Will default to meas when needed
         )
 
     def __getitem__(self, key: str) -> float:
@@ -186,6 +248,20 @@ class NoiseModel:
         elif key == "idle_during_meas" and value is None:
             # Default idle_during_meas to idle rate if not explicitly set
             return self._params["idle"]
+        # Handle granular reset parameters fallback to base reset
+        elif key == "reset_data" and value is None:
+            return self._params["reset"]
+        elif key == "reset_anc_X" and value is None:
+            return self._params["reset"]
+        elif key == "reset_anc_Z" and value is None:
+            return self._params["reset"]
+        # Handle granular measurement parameters fallback to base meas
+        elif key == "meas_data" and value is None:
+            return self._params["meas"]
+        elif key == "meas_anc_X" and value is None:
+            return self._params["meas"]
+        elif key == "meas_anc_Z" and value is None:
+            return self._params["meas"]
 
         return value
 
@@ -215,13 +291,16 @@ class NoiseModel:
 
         # Handle None values for special parameters
         if value is None:
-            if key in {"cult", "idle_during_cnot", "idle_during_meas"}:
+            if key in {"cult", "idle_during_cnot", "idle_during_meas", 
+                      "reset_data", "reset_anc_X", "reset_anc_Z",
+                      "meas_data", "meas_anc_X", "meas_anc_Z"}:
                 self._params[key] = None
                 return
             else:
                 raise ValueError(
                     f"Noise parameter '{key}' cannot be None. "
-                    f"Only 'cult', 'idle_during_cnot', and 'idle_during_meas' can be None."
+                    f"Only 'cult', 'idle_during_cnot', 'idle_during_meas', "
+                    f"and granular reset/measurement parameters can be None."
                 )
 
         # Convert to float and validate
@@ -236,6 +315,10 @@ class NoiseModel:
             self._params[key] = float_value if float_value > 0 else None
         elif key in {"idle_during_cnot", "idle_during_meas"}:
             # For idle context parameters, any explicit value (including 0) overrides idle
+            self._params[key] = float_value
+        elif key in {"reset_data", "reset_anc_X", "reset_anc_Z", 
+                     "meas_data", "meas_anc_X", "meas_anc_Z"}:
+            # For granular reset/measurement parameters, any explicit value (including 0) overrides base parameter
             self._params[key] = float_value
         else:
             self._params[key] = float_value
@@ -301,7 +384,9 @@ class NoiseModel:
             If any parameter is negative.
         """
         for key, value in self._params.items():
-            if key in {"cult", "idle_during_cnot", "idle_during_meas"} and value is None:
+            if key in {"cult", "idle_during_cnot", "idle_during_meas",
+                      "reset_data", "reset_anc_X", "reset_anc_Z",
+                      "meas_data", "meas_anc_X", "meas_anc_Z"} and value is None:
                 continue  # These parameters can be None
             if value < 0:
                 raise ValueError(
@@ -353,7 +438,9 @@ class NoiseModel:
         """
         param_strs = []
         for key, value in self._params.items():
-            if key == "cult" and value is None:
+            if key in {"cult", "idle_during_cnot", "idle_during_meas",
+                      "reset_data", "reset_anc_X", "reset_anc_Z",
+                      "meas_data", "meas_anc_X", "meas_anc_Z"} and value is None:
                 param_strs.append(f"{key}=None")
             else:
                 param_strs.append(f"{key}={value}")

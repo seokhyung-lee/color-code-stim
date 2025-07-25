@@ -114,6 +114,14 @@ class CircuitBuilder:
         self.p_depol1_after_cnot = noise_model["depol1_after_cnot"]
         self.p_idle_during_cnot = noise_model["idle_during_cnot"]
         self.p_idle_during_meas = noise_model["idle_during_meas"]
+        
+        # Extract granular reset/measurement rates
+        self.p_reset_data = noise_model["reset_data"]
+        self.p_reset_anc_X = noise_model["reset_anc_X"]
+        self.p_reset_anc_Z = noise_model["reset_anc_Z"]
+        self.p_meas_data = noise_model["meas_data"]
+        self.p_meas_anc_X = noise_model["meas_anc_X"]
+        self.p_meas_anc_Z = noise_model["meas_anc_Z"]
 
         # Extract qubit groups
         self.data_qubits = qubit_groups["data"]
@@ -305,10 +313,15 @@ class CircuitBuilder:
                     ),
                 )
 
-            # Add measurements (use p_meas=0 for perfect first round)
-            p_meas_round = 0 if skip_noise else self.p_meas
-            synd_extr_circuit.append("MRZ", self.anc_Z_qids, p_meas_round)
-            synd_extr_circuit.append("MRX", self.anc_X_qids, p_meas_round)
+            # Add measurements (use specific meas rates or 0 for perfect first round)
+            if skip_noise:
+                p_meas_anc_Z = 0
+                p_meas_anc_X = 0
+            else:
+                p_meas_anc_Z = self._get_meas_rate("anc_Z")
+                p_meas_anc_X = self._get_meas_rate("anc_X")
+            synd_extr_circuit.append("MRZ", self.anc_Z_qids, p_meas_anc_Z)
+            synd_extr_circuit.append("MRX", self.anc_X_qids, p_meas_anc_X)
 
             # Apply idle noise to data qubits during measurement operations
             if not skip_noise:
@@ -327,9 +340,12 @@ class CircuitBuilder:
             )
 
             # Add reset errors and idle errors (these are for the next round, so always include)
-            if self.p_reset > 0:
-                synd_extr_circuit.append("X_ERROR", self.anc_Z_qids, self.p_reset)
-                synd_extr_circuit.append("Z_ERROR", self.anc_X_qids, self.p_reset)
+            reset_rate_anc_Z = self._get_reset_rate("anc_Z")
+            reset_rate_anc_X = self._get_reset_rate("anc_X")
+            if reset_rate_anc_Z > 0:
+                synd_extr_circuit.append("X_ERROR", self.anc_Z_qids, reset_rate_anc_Z)
+            if reset_rate_anc_X > 0:
+                synd_extr_circuit.append("Z_ERROR", self.anc_X_qids, reset_rate_anc_X)
 
             synd_extr_circuit.append("TICK")
             synd_extr_circuit.append("SHIFT_COORDS", (), (0, 0, 1))
@@ -759,16 +775,18 @@ class CircuitBuilder:
         """Add data qubit initialization based on circuit type."""
         if self.circuit_type in {"tri", "rec"}:
             circuit.append(f"R{self.temp_bdry_type}", self.data_qids)
-            if self.p_reset > 0 and not self.perfect_logical_initialization:
+            reset_rate_data = self._get_reset_rate("data")
+            if reset_rate_data > 0 and not self.perfect_logical_initialization:
                 error_type = "Z_ERROR" if self.temp_bdry_type == "X" else "X_ERROR"
-                circuit.append(error_type, self.data_qids, self.p_reset)
+                circuit.append(error_type, self.data_qids, reset_rate_data)
 
         elif self.circuit_type == "rec_stability":
             circuit.append("RX", data_q1s)
             circuit.append("RZ", data_q2s)
-            if self.p_reset > 0 and not self.perfect_logical_initialization:
-                circuit.append("Z_ERROR", data_q1s, self.p_reset)
-                circuit.append("X_ERROR", data_q2s, self.p_reset)
+            reset_rate_data = self._get_reset_rate("data")
+            if reset_rate_data > 0 and not self.perfect_logical_initialization:
+                circuit.append("Z_ERROR", data_q1s, reset_rate_data)
+                circuit.append("X_ERROR", data_q2s, reset_rate_data)
             circuit.append("TICK")
             circuit.append("CX", red_links.ravel())
             if self.p_cnot > 0:
@@ -782,16 +800,17 @@ class CircuitBuilder:
                 y_ge=self.y_offset_init_patch
             )["qid"]
             circuit.append(f"R{self.temp_bdry_type}", data_qids_init_patch)
-            if self.p_reset > 0 and not self.perfect_logical_initialization:
+            reset_rate_data = self._get_reset_rate("data")
+            if reset_rate_data > 0 and not self.perfect_logical_initialization:
                 error_type = "Z_ERROR" if self.temp_bdry_type == "X" else "X_ERROR"
-                circuit.append(error_type, data_qids_init_patch, self.p_reset)
+                circuit.append(error_type, data_qids_init_patch, reset_rate_data)
 
             # Data qubits outside the initial patch
             circuit.append("RX", data_q1s)
             circuit.append("RZ", data_q2s)
-            if self.p_reset > 0:
-                circuit.append("Z_ERROR", data_q1s, self.p_reset)
-                circuit.append("X_ERROR", data_q2s, self.p_reset)
+            if reset_rate_data > 0:
+                circuit.append("Z_ERROR", data_q1s, reset_rate_data)
+                circuit.append("X_ERROR", data_q2s, reset_rate_data)
             circuit.append("TICK")
             circuit.append("CX", red_links.ravel())
             if self.p_cnot > 0:
@@ -813,14 +832,15 @@ class CircuitBuilder:
             # Data qubits outside the initial patch (inserted before the last tick)
             circuit.insert(last_tick_pos, stim.CircuitInstruction("RX", data_q1s))
             circuit.insert(last_tick_pos + 1, stim.CircuitInstruction("RZ", data_q2s))
-            if self.p_reset > 0:
+            reset_rate_data = self._get_reset_rate("data")
+            if reset_rate_data > 0:
                 circuit.insert(
                     last_tick_pos + 2,
-                    stim.CircuitInstruction("Z_ERROR", data_q1s, [self.p_reset]),
+                    stim.CircuitInstruction("Z_ERROR", data_q1s, [reset_rate_data]),
                 )
                 circuit.insert(
                     last_tick_pos + 3,
-                    stim.CircuitInstruction("X_ERROR", data_q2s, [self.p_reset]),
+                    stim.CircuitInstruction("X_ERROR", data_q2s, [reset_rate_data]),
                 )
 
             # CX gate (inserted after the last tick)
@@ -838,9 +858,13 @@ class CircuitBuilder:
         circuit.append("RZ", self.anc_Z_qids)
         circuit.append("RX", self.anc_X_qids)
 
-        if self.p_reset > 0 and not self.perfect_logical_initialization:
-            circuit.append("X_ERROR", self.anc_Z_qids, self.p_reset)
-            circuit.append("Z_ERROR", self.anc_X_qids, self.p_reset)
+        if not self.perfect_logical_initialization:
+            reset_rate_anc_Z = self._get_reset_rate("anc_Z")
+            reset_rate_anc_X = self._get_reset_rate("anc_X")
+            if reset_rate_anc_Z > 0:
+                circuit.append("X_ERROR", self.anc_Z_qids, reset_rate_anc_Z)
+            if reset_rate_anc_X > 0:
+                circuit.append("Z_ERROR", self.anc_X_qids, reset_rate_anc_X)
 
         circuit.append("TICK")
 
@@ -853,7 +877,7 @@ class CircuitBuilder:
     ) -> None:
         """Add final data qubit measurements and last detectors."""
         use_last_detectors = True
-        p_meas_final = 0 if self.perfect_logical_measurement else self.p_meas
+        p_meas_final = 0 if self.perfect_logical_measurement else self._get_meas_rate("data")
 
         if self.circuit_type in {"tri", "rec", "growing", "cult+growing"}:
             circuit.append(f"M{self.temp_bdry_type}", self.data_qids, p_meas_final)
@@ -1033,6 +1057,60 @@ class CircuitBuilder:
 
         if unique_qubits:
             circuit.append("DEPOLARIZE1", unique_qubits, self.p_depol1_after_cnot)
+
+    def _get_reset_rate(self, qubit_type: str) -> float:
+        """
+        Get the appropriate reset noise rate for a given qubit type.
+
+        Parameters
+        ----------
+        qubit_type : str
+            Type of qubit for which to get reset rate. Must be one of:
+            - "data": Data qubits
+            - "anc_X": X-type ancilla qubits
+            - "anc_Z": Z-type ancilla qubits
+
+        Returns
+        -------
+        float
+            Appropriate reset noise rate based on qubit type and parameter overrides.
+            Falls back to base reset rate if no specific rate is set.
+        """
+        if qubit_type == "data":
+            return self.p_reset_data
+        elif qubit_type == "anc_X":
+            return self.p_reset_anc_X
+        elif qubit_type == "anc_Z":
+            return self.p_reset_anc_Z
+        else:
+            raise ValueError(f"Invalid qubit_type '{qubit_type}'. Must be 'data', 'anc_X', or 'anc_Z'.")
+
+    def _get_meas_rate(self, qubit_type: str) -> float:
+        """
+        Get the appropriate measurement noise rate for a given qubit type.
+
+        Parameters
+        ----------
+        qubit_type : str
+            Type of qubit for which to get measurement rate. Must be one of:
+            - "data": Data qubits
+            - "anc_X": X-type ancilla qubits
+            - "anc_Z": Z-type ancilla qubits
+
+        Returns
+        -------
+        float
+            Appropriate measurement noise rate based on qubit type and parameter overrides.
+            Falls back to base measurement rate if no specific rate is set.
+        """
+        if qubit_type == "data":
+            return self.p_meas_data
+        elif qubit_type == "anc_X":
+            return self.p_meas_anc_X
+        elif qubit_type == "anc_Z":
+            return self.p_meas_anc_Z
+        else:
+            raise ValueError(f"Invalid qubit_type '{qubit_type}'. Must be 'data', 'anc_X', or 'anc_Z'.")
 
     def _get_idle_rate_for_context(self, context: str) -> float:
         """

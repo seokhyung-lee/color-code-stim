@@ -102,6 +102,30 @@ colorcode = ColorCode(
 num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 ```
 
+### Granular Noise Control
+The NoiseModel class supports fine-grained control over reset and measurement operations for different qubit types:
+
+```python
+# Granular reset/measurement noise control
+noise = NoiseModel(
+    reset=0.001,       # Base reset rate for all qubits
+    meas=0.002,        # Base measurement rate for all qubits
+    reset_data=0.005,  # Override reset rate for data qubits
+    reset_anc_X=None,  # Use base reset rate for X-type ancilla qubits
+    reset_anc_Z=None,  # Use base reset rate for Z-type ancilla qubits
+    meas_data=None,    # Use base measurement rate for data qubits
+    meas_anc_X=0.003,  # Override measurement rate for X-type ancilla qubits
+    meas_anc_Z=None,   # Use base measurement rate for Z-type ancilla qubits
+)
+colorcode = ColorCode(d=5, rounds=5, circuit_type="tri", noise_model=noise)
+```
+
+**Granular Parameters:**
+- `reset_data`, `reset_anc_X`, `reset_anc_Z`: Override reset rates for specific qubit types
+- `meas_data`, `meas_anc_X`, `meas_anc_Z`: Override measurement rates for specific qubit types
+- If None (default), parameters fall back to base `reset` or `meas` rates
+- Enables precise control over noise characteristics for different circuit elements
+
 ### Comparative Decoding
 - Set `comparative_decoding=True` to run decoder multiple times across logical classes
 - Returns logical gap values for post-selection
