@@ -77,6 +77,7 @@ class ColorCode:
         circuit_type: str = "tri",
         d2: int = None,
         cnot_schedule: Union[str, List[int]] = "tri_optimal",
+        superdense_circuit: bool = False,
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         noise_model: Optional[NoiseModel] = None,
         perfect_logical_initialization: bool = False,
@@ -154,7 +155,7 @@ class ColorCode:
             Second code distance required for circuit types 'rec'/'rectangle', 'growing',
             and 'cult+growing'. If not provided, `d2 = d` is used.
 
-        cnot_schedule : {'tri_optimal', 'tri_optimal_reversed'} or list of 12 integers,
+        cnot_schedule : {'tri_optimal', 'tri_optimal_reversed', 'superdense_default'} or list of 12 integers,
                         default 'tri_optimal'
             CNOT schedule.
             If this is a list of 12 integers, it indicates (a, b, ... l) specifying
@@ -163,6 +164,15 @@ class ColorCode:
             is the optimal schedule for the triangular color code.
             If this is 'tri_optimal_reversed', it is (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
             which has the X- and Z-part reversed from 'tri_optimal'.
+            If this is 'superdense_default', it is (3, 1, 2, 3, 1, 2, 6, 4, 5, 6, 4, 5),
+            which is used for superdense syndrome extraction circuits.
+
+        superdense_circuit : bool, default False
+            Whether to use superdense syndrome extraction circuit. When True, the syndrome
+            extraction follows a 4-step pattern: (1) X-type anc → Z-type anc CNOTs, 
+            (2) data → anc CNOTs with spatial routing, (3) anc → data CNOTs, (4) repeat step 1.
+            If True and cnot_schedule is 'tri_optimal', it automatically switches to 
+            'superdense_default'.
 
         temp_bdry_type : {'X', 'Y', 'Z', 'x', 'y', 'z'}, optional
             Type of the temporal boundaries, i.e., the reset/measurement basis of
@@ -243,6 +253,10 @@ class ColorCode:
             Ignored if noise_model is provided.
 
         """
+        # Automatic cnot_schedule selection for superdense circuits
+        if superdense_circuit and cnot_schedule == "tri_optimal":
+            cnot_schedule = "superdense_default"
+        
         if isinstance(cnot_schedule, str):
             if cnot_schedule in CNOT_SCHEDULES:
                 cnot_schedule = CNOT_SCHEDULES[cnot_schedule]
@@ -356,6 +370,7 @@ class ColorCode:
             self.obs_paulis = [temp_bdry_type] * self.num_obs
 
         self.cnot_schedule = cnot_schedule
+        self.superdense_circuit = superdense_circuit
         self.perfect_init_final = perfect_init_final
 
         # Handle backward compatibility: perfect_init_final sets both initialization and measurement
@@ -405,6 +420,7 @@ class ColorCode:
             rounds=self.rounds,
             circuit_type=self.circuit_type,
             cnot_schedule=self.cnot_schedule,
+            superdense_circuit=self.superdense_circuit,
             temp_bdry_type=self.temp_bdry_type,
             noise_model=self.noise_model,
             perfect_init_final=self.perfect_init_final,

@@ -30,6 +30,7 @@ class CircuitBuilder:
         rounds: int,
         circuit_type: CIRCUIT_TYPE,
         cnot_schedule: List[int],
+        superdense_circuit: bool,
         temp_bdry_type: str,
         noise_model: Union[NoiseModel, Dict[str, float]],
         perfect_init_final: bool,
@@ -57,6 +58,8 @@ class CircuitBuilder:
             Type of circuit to build.
         cnot_schedule : List[int]
             CNOT gate schedule.
+        superdense_circuit : bool
+            Whether to use superdense syndrome extraction circuit.
         temp_bdry_type : str
             Temporal boundary type.
         noise_model : NoiseModel or Dict[str, float]
@@ -85,6 +88,7 @@ class CircuitBuilder:
         self.rounds = rounds
         self.circuit_type = circuit_type
         self.cnot_schedule = cnot_schedule
+        self.superdense_circuit = superdense_circuit
         self.temp_bdry_type = temp_bdry_type
         self.noise_model = noise_model
         self.perfect_init_final = perfect_init_final
@@ -344,6 +348,10 @@ class CircuitBuilder:
         perfect_round : bool, default False
             If True, skip CNOT and idle errors for a perfect syndrome extraction round.
         """
+        # Route to superdense version if enabled
+        if self.superdense_circuit:
+            return self._build_superdense_syndrome_extraction(perfect_round)
+        
         synd_extr_circuit = stim.Circuit()
 
         for timeslice in range(1, max(self.cnot_schedule) + 1):
@@ -403,6 +411,181 @@ class CircuitBuilder:
             synd_extr_circuit.append("TICK")
 
         return synd_extr_circuit
+
+    def _build_superdense_syndrome_extraction(
+        self, perfect_round: bool = False
+    ) -> stim.Circuit:
+        """Build the superdense syndrome extraction circuit without SPAM operations.
+
+        Implements the 4-step superdense pattern:
+        1. X-type anc → Z-type anc CNOTs (same face_x)
+        2. Data → anc CNOTs with spatial routing (x < face_x → Z-type, x > face_x → X-type)
+        3. Anc → data CNOTs (reverse of step 2)
+        4. Repeat step 1
+
+        Parameters
+        ----------
+        perfect_round : bool, default False
+            If True, skip CNOT and idle errors for a perfect syndrome extraction round.
+        """
+        synd_extr_circuit = stim.Circuit()
+
+        # Step 1: X-type anc → Z-type anc CNOTs (same face_x)
+        self._add_anc_to_anc_cnots(synd_extr_circuit, perfect_round)
+
+        # Step 2: Data → anc CNOTs using first half of schedule
+        self._add_data_anc_cnots(synd_extr_circuit, self.cnot_schedule[:6], 
+                                 data_to_anc=True, perfect_round=perfect_round)
+
+        # Step 3: Anc → data CNOTs using second half of schedule  
+        self._add_data_anc_cnots(synd_extr_circuit, self.cnot_schedule[6:], 
+                                 data_to_anc=False, perfect_round=perfect_round)
+
+        # Step 4: Repeat step 1
+        self._add_anc_to_anc_cnots(synd_extr_circuit, perfect_round)
+
+        return synd_extr_circuit
+
+    def _add_anc_to_anc_cnots(self, circuit: stim.Circuit, perfect_round: bool = False) -> None:
+        """Add X-type anc → Z-type anc CNOTs for superdense circuit."""
+        CX_targets = []
+        operated_qids = set()
+
+        # Group ancilla qubits by face_x to find pairs
+        face_x_groups = {}
+        for anc_Z_qubit in self.anc_Z_qubits:
+            face_x = anc_Z_qubit["face_x"]
+            if face_x not in face_x_groups:
+                face_x_groups[face_x] = {"Z": None, "X": None}
+            face_x_groups[face_x]["Z"] = anc_Z_qubit
+
+        for anc_X_qubit in self.anc_X_qubits:
+            face_x = anc_X_qubit["face_x"]
+            if face_x not in face_x_groups:
+                face_x_groups[face_x] = {"Z": None, "X": None}
+            face_x_groups[face_x]["X"] = anc_X_qubit
+
+        # Add CNOTs from X-type to Z-type ancillas with same face_x
+        for face_x, anc_pair in face_x_groups.items():
+            if anc_pair["Z"] is not None and anc_pair["X"] is not None:
+                anc_X_qid = anc_pair["X"].index
+                anc_Z_qid = anc_pair["Z"].index
+                CX_targets.extend([anc_X_qid, anc_Z_qid])
+                operated_qids.update({anc_X_qid, anc_Z_qid})
+
+        if CX_targets:
+            circuit.append("CX", CX_targets)
+            if self.p_cnot > 0 and not perfect_round:
+                circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
+            
+            # Apply single-qubit depolarizing noise
+            self._apply_depol1_after_cnot(circuit, CX_targets, perfect_round)
+
+            # Apply idle noise to non-operated qubits
+            idle_rate = self._get_idle_rate_for_context("cnot")
+            if idle_rate > 0 and not perfect_round:
+                idling_qids = list(self.all_qids_set - operated_qids)
+                circuit.append("DEPOLARIZE1", idling_qids, idle_rate)
+
+            circuit.append("TICK")
+
+    def _add_data_anc_cnots(self, circuit: stim.Circuit, schedule_part: List[int], 
+                           data_to_anc: bool, perfect_round: bool = False) -> None:
+        """Add data ↔ anc CNOTs for superdense circuit with spatial routing.
+        
+        For superdense circuits:
+        - schedule_part contains 6 elements (timeslices for the 6 spatial positions)
+        - All 6 spatial positions are covered in both data→anc and anc→data steps
+        - Ancilla type (Z vs X) is determined solely by spatial routing logic
+        """
+        for timeslice in range(1, max(schedule_part) + 1):
+            targets = [
+                i for i, val in enumerate(schedule_part) if val == timeslice
+            ]
+            operated_qids = set()
+            CX_targets = []
+
+            for target in targets:
+                # target is always in range 0-5 (spatial positions)
+                # Define offset based on target position
+                if target == 0:
+                    offset = (-2, 1)
+                elif target == 1:
+                    offset = (2, 1)
+                elif target == 2:
+                    offset = (4, 0)
+                elif target == 3:
+                    offset = (2, -1)
+                elif target == 4:
+                    offset = (-2, -1)
+                elif target == 5:
+                    offset = (-4, 0)
+                else:
+                    continue  # Invalid target
+
+                # Check Z-type ancillas for spatial routing: x < face_x → Z-type only
+                for anc_qubit in self.anc_Z_qubits:
+                    data_qubit_x = anc_qubit["face_x"] + offset[0]
+                    data_qubit_y = anc_qubit["face_y"] + offset[1]
+                    data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
+                    
+                    try:
+                        data_qubit = self.tanner_graph.vs.find(name=data_qubit_name)
+                    except ValueError:
+                        continue
+
+                    # Apply spatial routing: data qubits with x < face_x connect to Z-type anc only
+                    face_x = anc_qubit["face_x"]
+                    if data_qubit_x < face_x:
+                        anc_qid = anc_qubit.index
+                        data_qid = data_qubit.index
+                        operated_qids.update({anc_qid, data_qid})
+
+                        if data_to_anc:
+                            CX_target = [data_qid, anc_qid]
+                        else:
+                            CX_target = [anc_qid, data_qid]
+                        CX_targets.extend(CX_target)
+
+                # Check X-type ancillas for spatial routing: x > face_x → X-type only
+                for anc_qubit in self.anc_X_qubits:
+                    data_qubit_x = anc_qubit["face_x"] + offset[0]
+                    data_qubit_y = anc_qubit["face_y"] + offset[1]
+                    data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
+                    
+                    try:
+                        data_qubit = self.tanner_graph.vs.find(name=data_qubit_name)
+                    except ValueError:
+                        continue
+
+                    # Apply spatial routing: data qubits with x > face_x connect to X-type anc only
+                    face_x = anc_qubit["face_x"]
+                    if data_qubit_x > face_x:
+                        anc_qid = anc_qubit.index
+                        data_qid = data_qubit.index
+                        operated_qids.update({anc_qid, data_qid})
+
+                        if data_to_anc:
+                            CX_target = [data_qid, anc_qid]
+                        else:
+                            CX_target = [anc_qid, data_qid]
+                        CX_targets.extend(CX_target)
+
+            if CX_targets:
+                circuit.append("CX", CX_targets)
+                if self.p_cnot > 0 and not perfect_round:
+                    circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
+
+                # Apply single-qubit depolarizing noise
+                self._apply_depol1_after_cnot(circuit, CX_targets, perfect_round)
+
+                # Apply idle noise to non-operated qubits
+                idle_rate = self._get_idle_rate_for_context("cnot")
+                if idle_rate > 0 and not perfect_round:
+                    idling_qids = list(self.all_qids_set - operated_qids)
+                    circuit.append("DEPOLARIZE1", idling_qids, idle_rate)
+
+                circuit.append("TICK")
 
     def _add_detectors(
         self,
