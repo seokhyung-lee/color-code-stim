@@ -5,7 +5,7 @@ This module provides the CircuitBuilder class which handles the generation
 of quantum circuits for different color code topologies and configurations.
 """
 
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union, get_args
 import numpy as np
 import stim
 import igraph as ig
@@ -103,6 +103,9 @@ class CircuitBuilder:
         self.cultivation_circuit = cultivation_circuit
         self.comparative_decoding = comparative_decoding
 
+        # Validate parameters
+        self.validate()
+
         # Extract physical error rates
         self.p_bitflip = noise_model["bitflip"]
         self.p_depol = noise_model["depol"]
@@ -144,6 +147,66 @@ class CircuitBuilder:
         self.num_qubits = tanner_graph.vcount()
         self.all_qids = list(range(self.num_qubits))
         self.all_qids_set = set(self.all_qids)
+
+    def validate(self) -> None:
+        """
+        Validate parameter compatibility with circuit type.
+
+        Raises
+        ------
+        ValueError
+            If parameters are incompatible with the specified circuit_type.
+        """
+        # Validate rounds
+        if self.rounds < 1:
+            raise ValueError(f"rounds must be >= 1. Got rounds={self.rounds}")
+
+        # Validate circuit_type
+        supported_types = set(get_args(CIRCUIT_TYPE))
+        if self.circuit_type not in supported_types:
+            raise ValueError(f"circuit_type must be one of {supported_types}. Got circuit_type='{self.circuit_type}'")
+
+        # Validate cnot_schedule
+        if len(self.cnot_schedule) != 12:
+            raise ValueError(f"cnot_schedule must have 12 integers. Got {len(self.cnot_schedule)} elements")
+        if not all(isinstance(x, int) for x in self.cnot_schedule):
+            raise ValueError(f"cnot_schedule must contain only integers. Got {self.cnot_schedule}")
+
+        # Validate temp_bdry_type based on circuit_type
+        if self.circuit_type in {"tri", "rec", "growing"}:
+            if self.temp_bdry_type not in {"X", "Y", "Z"}:
+                raise ValueError(f"'{self.circuit_type}' circuit requires temp_bdry_type in {{'X', 'Y', 'Z'}}. Got temp_bdry_type='{self.temp_bdry_type}'")
+        elif self.circuit_type == "cult+growing":
+            if self.temp_bdry_type != "Y":
+                raise ValueError(f"'cult+growing' circuit requires temp_bdry_type='Y'. Got temp_bdry_type='{self.temp_bdry_type}'")
+        elif self.circuit_type == "rec_stability":
+            if self.temp_bdry_type != "r":
+                raise ValueError(f"'rec_stability' circuit requires temp_bdry_type='r'. Got temp_bdry_type='{self.temp_bdry_type}'")
+
+        # Validate d and d2 constraints
+        if self.circuit_type == "tri":
+            if self.d < 3 or self.d % 2 == 0 or self.d2 is not None:
+                raise ValueError(f"'tri' circuit requires d: odd >= 3, d2: None. Got d={self.d}, d2={self.d2}")
+
+        elif self.circuit_type == "rec":
+            if (self.d < 2 or self.d % 2 != 0 or self.d2 is None or 
+                self.d2 < 2 or self.d2 % 2 != 0):
+                raise ValueError(f"'rec' circuit requires d, d2: even >= 2. Got d={self.d}, d2={self.d2}")
+
+        elif self.circuit_type == "rec_stability":
+            if (self.d < 4 or self.d % 2 != 0 or self.d2 is None or 
+                self.d2 < 4 or self.d2 % 2 != 0):
+                raise ValueError(f"'rec_stability' circuit requires d, d2: even >= 4. Got d={self.d}, d2={self.d2}")
+
+        elif self.circuit_type == "growing":
+            if (self.d < 3 or self.d % 2 == 0 or self.d2 is None or 
+                self.d2 % 2 == 0 or self.d2 <= self.d):
+                raise ValueError(f"'growing' circuit requires d, d2: odd, d2 > d >= 3. Got d={self.d}, d2={self.d2}")
+
+        elif self.circuit_type == "cult+growing":
+            if (self.d not in {3, 5} or self.d2 is None or 
+                self.d2 % 2 == 0 or self.d2 <= self.d):
+                raise ValueError(f"'cult+growing' circuit requires d in {{3, 5}}, d2: odd, d2 > d. Got d={self.d}, d2={self.d2}")
 
     def build(self) -> stim.Circuit:
         """
@@ -219,7 +282,7 @@ class CircuitBuilder:
                 [link.source, link.target]
                 for link in self.tanner_graph.es.select(color="r")
             ]
-            red_links = np.array(red_links)
+            red_links = np.array(red_links).reshape(-1, 2)
             data_q1s = red_links[:, 0]
             data_q2s = red_links[:, 1]
         elif self.circuit_type in {"tri", "rec"}:
@@ -824,7 +887,7 @@ class CircuitBuilder:
 
                 if detector_exists:
                     j_X = self.anc_X_qubits["name"].index(
-                        f"{anc_qubit_Z['x']}-{anc_qubit_Z['y']}-X"
+                        f"{anc_qubit_Z['face_x'] + 1}-{anc_qubit_Z['face_y']}-X"
                     )
                     det_coords = coords + (0, 1, color_to_color_val(color))
                     targets = [
@@ -995,7 +1058,7 @@ class CircuitBuilder:
             lookback_inds.append(init_lookback + j_anc)
             if self.temp_bdry_type == "Y":
                 anc_X_qubit = self.tanner_graph.vs.find(
-                    name=f"{anc_qubit['x']}-{anc_qubit['y']}-X"
+                    name=f"{anc_qubit['face_x'] + 1}-{anc_qubit['face_y']}-X"
                 )
                 j_anc_X = self.anc_X_qids.index(anc_X_qubit.index)
                 lookback_inds.append(
