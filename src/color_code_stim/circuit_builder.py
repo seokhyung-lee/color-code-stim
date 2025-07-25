@@ -372,8 +372,8 @@ class CircuitBuilder:
                     self.anc_Z_qubits if target < 6 else self.anc_X_qubits
                 )
                 for anc_qubit in target_anc_qubits:
-                    data_qubit_x = anc_qubit["x"] + offset[0]
-                    data_qubit_y = anc_qubit["y"] + offset[1]
+                    data_qubit_x = anc_qubit["face_x"] + offset[0]
+                    data_qubit_y = anc_qubit["face_y"] + offset[1]
                     data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
                     try:
                         data_qubit = self.tanner_graph.vs.find(name=data_qubit_name)

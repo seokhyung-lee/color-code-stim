@@ -62,7 +62,10 @@ pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 
 **Tanner Graph** (igraph.Graph)
 - Vertices represent qubits and stabilizer checks
-- Attributes: position (x,y), qubit ID, Pauli type, color, boundary info
+- Attributes: 
+  - Ancilla positions: (x,y) coordinates for Z-type at (face_x-1, face_y), X-type at (face_x+1, face_y)
+  - Face centers: (face_x, face_y) coordinates for stabilizer face centers and connectivity
+  - Additional: qubit ID, Pauli type, color, boundary info
 - Used for visualizing lattice structure and decoder operations
 
 **Detector Error Models** (stim.DetectorErrorModel)

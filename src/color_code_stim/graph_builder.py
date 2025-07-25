@@ -15,13 +15,13 @@ from .config import PATCH_TYPE, COLOR_LABEL, CIRCUIT_TYPE
 class TannerGraphBuilder:
     """
     Builder class for constructing Tanner graphs for color code patches.
-    
+
     The graph structure depends on the patch type:
     - 'tri': Triangular patches (used for tri, growing, cult+growing circuits)
-    - 'rec': Rectangular patches 
+    - 'rec': Rectangular patches
     - 'rec_stability': Stability experiment patches
     """
-    
+
     def __init__(self, circuit_type: CIRCUIT_TYPE, d: int, d2: Optional[int] = None):
         """
         Initialize the Tanner graph builder.
@@ -38,7 +38,7 @@ class TannerGraphBuilder:
         self.circuit_type = circuit_type
         self.d = d
         self.d2 = d2 or d
-        
+
         # Map circuit types to patch types
         if circuit_type in {"tri", "growing", "cult+growing"}:
             self.patch_type: PATCH_TYPE = "tri"
@@ -48,10 +48,10 @@ class TannerGraphBuilder:
             self.patch_type = "rec_stability"
         else:
             raise ValueError(f"Invalid circuit type: {circuit_type}")
-        
+
         self.tanner_graph = ig.Graph()
         self.qubit_groups: Dict[str, Any] = {}
-    
+
     def build(self) -> Tuple[ig.Graph, Dict[str, Any]]:
         """
         Build the complete Tanner graph and qubit groups.
@@ -70,30 +70,30 @@ class TannerGraphBuilder:
             self._build_stability_graph()
         else:
             raise ValueError(f"Invalid patch type: {self.patch_type}")
-        
+
         # Update qubit groups
         self._update_qubit_groups()
-        
+
         # Add edges
         self._add_tanner_edges()
-        
+
         # Assign colors to lattice edges
         self._assign_link_colors()
-        
+
         return self.tanner_graph, self.qubit_groups
-    
+
     def _build_triangular_graph(self) -> None:
         """Build vertices for triangular patch geometry."""
         if self.circuit_type == "tri":
             d = self.d
         else:  # growing, cult+growing
             d = self.d2
-            
+
         assert d % 2 == 1
-        
+
         detid = 0
         L = round(3 * (d - 1) / 2)
-        
+
         for y in range(L + 1):
             if y % 3 == 0:
                 anc_qubit_color = "g"
@@ -137,10 +137,14 @@ class TannerGraphBuilder:
                     )
                 else:
                     for pauli in ["Z", "X"]:
+                        # Calculate ancilla qubit coordinates
+                        anc_x = x - 1 if pauli == "Z" else x + 1
                         self.tanner_graph.add_vertex(
                             name=f"{x}-{y}-{pauli}",
-                            x=x,
+                            x=anc_x,
                             y=y,
+                            face_x=x,
+                            face_y=y,
                             qid=self.tanner_graph.vcount(),
                             pauli=pauli,
                             color=anc_qubit_color,
@@ -148,7 +152,7 @@ class TannerGraphBuilder:
                             boundary=boundary,
                         )
                         detid += 1
-    
+
     def _build_rectangular_graph(self) -> None:
         """Build vertices for rectangular patch geometry."""
         d, d2 = self.d, self.d2
@@ -158,7 +162,7 @@ class TannerGraphBuilder:
         detid = 0
         L1 = round(3 * d / 2 - 2)
         L2 = round(3 * d2 / 2 - 2)
-        
+
         for y in range(L2 + 1):
             if y % 3 == 0:
                 anc_qubit_color = "g"
@@ -197,10 +201,14 @@ class TannerGraphBuilder:
                     )
                 else:
                     for pauli in ["Z", "X"]:
+                        # Calculate ancilla qubit coordinates
+                        anc_x = x - 1 if pauli == "Z" else x + 1
                         self.tanner_graph.add_vertex(
                             name=f"{x}-{y}-{pauli}",
-                            x=x,
+                            x=anc_x,
                             y=y,
+                            face_x=x,
+                            face_y=y,
                             qid=self.tanner_graph.vcount(),
                             pauli=pauli,
                             color=anc_qubit_color,
@@ -224,7 +232,7 @@ class TannerGraphBuilder:
             obs_g=False,
             boundary="rg",
         )
-    
+
     def _build_stability_graph(self) -> None:
         """Build vertices for stability experiment patch geometry."""
         d = self.d
@@ -235,7 +243,7 @@ class TannerGraphBuilder:
         detid = 0
         L1 = round(3 * d / 2 - 2)
         L2 = round(3 * d2 / 2 - 2)
-        
+
         for y in range(L2 + 1):
             if y % 3 == 0:
                 anc_qubit_color = "r"
@@ -286,17 +294,21 @@ class TannerGraphBuilder:
                     )
                 else:
                     for pauli in ["Z", "X"]:
+                        # Calculate ancilla qubit coordinates
+                        anc_x = x - 1 if pauli == "Z" else x + 1
                         self.tanner_graph.add_vertex(
                             name=f"{x}-{y}-{pauli}",
-                            x=x,
+                            x=anc_x,
                             y=y,
+                            face_x=x,
+                            face_y=y,
                             qid=self.tanner_graph.vcount(),
                             pauli=pauli,
                             color=anc_qubit_color,
                             boundary=boundary,
                         )
                         detid += 1
-    
+
     def _update_qubit_groups(self) -> None:
         """Update qubit group mappings after vertex creation."""
         data_qubits = self.tanner_graph.vs.select(pauli=None)
@@ -318,24 +330,26 @@ class TannerGraphBuilder:
                 "anc_blue": anc_blue_qubits,
             }
         )
-    
+
     def _add_tanner_edges(self) -> None:
         """Add Tanner graph edges between ancilla and data qubits."""
         links = []
         offsets = [(-2, 1), (2, 1), (4, 0), (2, -1), (-2, -1), (-4, 0)]
-        
+
         for anc_qubit in self.qubit_groups["anc"]:
             data_qubits = []
             for offset in offsets:
-                data_qubit_x = anc_qubit["x"] + offset[0]
-                data_qubit_y = anc_qubit["y"] + offset[1]
+                data_qubit_x = anc_qubit["face_x"] + offset[0]
+                data_qubit_y = anc_qubit["face_y"] + offset[1]
                 data_qubit_name = f"{data_qubit_x}-{data_qubit_y}"
                 try:
                     data_qubit = self.tanner_graph.vs.find(name=data_qubit_name)
                 except ValueError:
                     continue
                 data_qubits.append(data_qubit)
-                self.tanner_graph.add_edge(anc_qubit, data_qubit, kind="tanner", color=None)
+                self.tanner_graph.add_edge(
+                    anc_qubit, data_qubit, kind="tanner", color=None
+                )
 
             if anc_qubit["pauli"] == "Z":
                 weight = len(data_qubits)
@@ -347,9 +361,9 @@ class TannerGraphBuilder:
                             qubit, next_qubit, kind="lattice", color=None
                         )
                         links.append(link)
-        
+
         self._links = links  # Store for color assignment
-    
+
     def _assign_link_colors(self) -> None:
         """Assign colors to lattice edges based on neighboring ancilla qubits."""
         for link in self._links:

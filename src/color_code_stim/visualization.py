@@ -167,7 +167,7 @@ def draw_lattice(
     if isinstance(highlight_faces, np.ndarray):
         highlight_faces = highlight_faces.tolist()
     if highlight_faces:
-        z_coords_to_vid = {(v["x"], v["y"]): v.index for v in anc_Z_qubits}
+        z_coords_to_vid = {(v["face_x"], v["face_y"]): v.index for v in anc_Z_qubits}
         z_name_to_vid = {v["name"]: v.index for v in anc_Z_qubits}
         # For Z qubits with name format "x-y", also add a mapping for "x-y-Z"
         z_name_to_vid.update(
@@ -430,7 +430,7 @@ def draw_tanner_graph(
 
     tanner_graph = code.tanner_graph
     g: ig.Graph
-    g = tanner_graph.subgraph(tanner_graph.vs.select(pauli_ne="X"))
+    # g = tanner_graph.subgraph(tanner_graph.vs.select(pauli_ne="X"))
     if not show_lattice:
         g = g.subgraph_edges(g.es.select(kind="tanner"))
 
