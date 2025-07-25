@@ -80,6 +80,9 @@ class ColorCode:
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         noise_model: Optional[NoiseModel] = None,
         perfect_init_final: bool = False,
+        perfect_logical_initialization: bool = False,
+        perfect_logical_measurement: bool = False,
+        perfect_first_syndrome_extraction: bool = False,
         comparative_decoding: bool = False,
         exclude_non_essential_pauli_detectors: bool = False,
         cultivation_circuit: Optional[stim.Circuit] = None,
@@ -174,7 +177,19 @@ class ColorCode:
             If not provided, a NoiseModel is constructed from individual parameters.
 
         perfect_init_final : bool, default False
-            Whether to assume logical initialization and final measurement are noiseless
+            Whether to assume logical initialization and final measurement are noiseless.
+            For backward compatibility. If True, sets both perfect_logical_initialization
+            and perfect_logical_measurement to True.
+        perfect_logical_initialization : bool, default False
+            Whether logical initialization operations (data qubit reset) are noiseless
+        perfect_logical_measurement : bool, default False
+            Whether logical final measurement operations are noiseless
+        perfect_first_syndrome_extraction : bool, default False
+            Whether the first syndrome extraction round is noiseless. Useful when
+            starting from a perfect logical state (together with
+            `perfect_logical_initialization=True`).
+            *Note:* `rounds` still includes this perfect round, so set to `T + 1` where 
+            `T` is the number of actual faulty syndrome extraction rounds you want to consider.
         comparative_decoding : bool, default False
             Whether to use the comparative decoding technique. If True, observables are
             included as additional detectors and decoding can be done by running the
@@ -344,6 +359,16 @@ class ColorCode:
 
         self.cnot_schedule = cnot_schedule
         self.perfect_init_final = perfect_init_final
+
+        # Handle backward compatibility: perfect_init_final sets both initialization and measurement
+        if perfect_init_final:
+            perfect_logical_initialization = True
+            perfect_logical_measurement = True
+
+        self.perfect_logical_initialization = perfect_logical_initialization
+        self.perfect_logical_measurement = perfect_logical_measurement
+        self.perfect_first_syndrome_extraction = perfect_first_syndrome_extraction
+
         self.comparative_decoding = comparative_decoding
 
         self.exclude_non_essential_pauli_detectors = (
@@ -385,6 +410,9 @@ class ColorCode:
             temp_bdry_type=self.temp_bdry_type,
             noise_model=self.noise_model,
             perfect_init_final=self.perfect_init_final,
+            perfect_logical_initialization=self.perfect_logical_initialization,
+            perfect_logical_measurement=self.perfect_logical_measurement,
+            perfect_first_syndrome_extraction=self.perfect_first_syndrome_extraction,
             tanner_graph=self.tanner_graph,
             qubit_groups=self.qubit_groups,
             exclude_non_essential_pauli_detectors=self.exclude_non_essential_pauli_detectors,

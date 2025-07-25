@@ -33,6 +33,9 @@ class CircuitBuilder:
         temp_bdry_type: str,
         noise_model: Union[NoiseModel, Dict[str, float]],
         perfect_init_final: bool,
+        perfect_logical_initialization: bool,
+        perfect_logical_measurement: bool,
+        perfect_first_syndrome_extraction: bool,
         tanner_graph: ig.Graph,
         qubit_groups: Dict[str, ig.VertexSeq],
         exclude_non_essential_pauli_detectors: bool = False,
@@ -59,7 +62,13 @@ class CircuitBuilder:
         noise_model : NoiseModel or Dict[str, float]
             Noise model specifying error rates for different operations.
         perfect_init_final : bool
-            Whether to use perfect initialization and final measurement.
+            Whether to use perfect initialization and final measurement (backward compatibility).
+        perfect_logical_initialization : bool
+            Whether logical initialization operations (data qubit reset) are noiseless.
+        perfect_logical_measurement : bool
+            Whether logical final measurement operations are noiseless.
+        perfect_first_syndrome_extraction : bool
+            Whether the first syndrome extraction round is noiseless.
         tanner_graph : ig.Graph
             The Tanner graph representing the color code.
         qubit_groups : Dict[str, ig.VertexSeq]
@@ -79,6 +88,9 @@ class CircuitBuilder:
         self.temp_bdry_type = temp_bdry_type
         self.noise_model = noise_model
         self.perfect_init_final = perfect_init_final
+        self.perfect_logical_initialization = perfect_logical_initialization
+        self.perfect_logical_measurement = perfect_logical_measurement
+        self.perfect_first_syndrome_extraction = perfect_first_syndrome_extraction
         self.tanner_graph = tanner_graph
         self.qubit_groups = qubit_groups
         self.exclude_non_essential_pauli_detectors = (
@@ -232,18 +244,19 @@ class CircuitBuilder:
         interface_detectors_info: Optional[Dict],
     ) -> Tuple[List[stim.Circuit], Set]:
         """Build syndrome extraction circuits with and without detectors."""
-        # Build base syndrome extraction circuit
-        synd_extr_circuit_without_spam = self._build_base_syndrome_extraction()
-
         # Build circuits with measurements and detectors
         synd_extr_circuits = []
         obs_included_lookbacks = set()
 
         for first in [True, False]:
-            synd_extr_circuit = synd_extr_circuit_without_spam.copy()
+            # Check if this is the first round and perfect_first_syndrome_extraction is enabled
+            skip_noise = (first and self.perfect_first_syndrome_extraction)
+            
+            # Build base syndrome extraction circuit (with or without noise)
+            synd_extr_circuit = self._build_base_syndrome_extraction(perfect_round=skip_noise)
 
-            # Add bit-flip errors
-            if self.p_bitflip > 0:
+            # Add bit-flip errors (skip if perfect first round)
+            if self.p_bitflip > 0 and not skip_noise:
                 synd_extr_circuit.insert(
                     0,
                     stim.CircuitInstruction(
@@ -251,8 +264,8 @@ class CircuitBuilder:
                     ),
                 )
 
-            # Add depolarizing errors
-            if self.p_depol > 0:
+            # Add depolarizing errors (skip if perfect first round)
+            if self.p_depol > 0 and not skip_noise:
                 synd_extr_circuit.insert(
                     0,
                     stim.CircuitInstruction(
@@ -260,9 +273,10 @@ class CircuitBuilder:
                     ),
                 )
 
-            # Add measurements
-            synd_extr_circuit.append("MRZ", self.anc_Z_qids, self.p_meas)
-            synd_extr_circuit.append("MRX", self.anc_X_qids, self.p_meas)
+            # Add measurements (use p_meas=0 for perfect first round)
+            p_meas_round = 0 if skip_noise else self.p_meas
+            synd_extr_circuit.append("MRZ", self.anc_Z_qids, p_meas_round)
+            synd_extr_circuit.append("MRX", self.anc_X_qids, p_meas_round)
 
             # Add detectors
             obs_included_lookbacks = self._add_detectors(
@@ -272,7 +286,7 @@ class CircuitBuilder:
                 obs_included_lookbacks,
             )
 
-            # Add reset errors and idle errors
+            # Add reset errors and idle errors (these are for the next round, so always include)
             if self.p_reset > 0:
                 synd_extr_circuit.append("X_ERROR", self.anc_Z_qids, self.p_reset)
                 synd_extr_circuit.append("Z_ERROR", self.anc_X_qids, self.p_reset)
@@ -286,8 +300,14 @@ class CircuitBuilder:
 
         return synd_extr_circuits, obs_included_lookbacks
 
-    def _build_base_syndrome_extraction(self) -> stim.Circuit:
-        """Build the base syndrome extraction circuit without SPAM operations."""
+    def _build_base_syndrome_extraction(self, perfect_round: bool = False) -> stim.Circuit:
+        """Build the base syndrome extraction circuit without SPAM operations.
+        
+        Parameters
+        ----------
+        perfect_round : bool, default False
+            If True, skip CNOT and idle errors for a perfect syndrome extraction round.
+        """
         synd_extr_circuit = stim.Circuit()
 
         for timeslice in range(1, max(self.cnot_schedule) + 1):
@@ -333,10 +353,10 @@ class CircuitBuilder:
                     CX_targets.extend(CX_target)
 
             synd_extr_circuit.append("CX", CX_targets)
-            if self.p_cnot > 0:
+            if self.p_cnot > 0 and not perfect_round:
                 synd_extr_circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
 
-            if self.p_idle > 0:
+            if self.p_idle > 0 and not perfect_round:
                 idling_qids = list(self.all_qids_set - operated_qids)
                 synd_extr_circuit.append("DEPOLARIZE1", idling_qids, self.p_idle)
 
@@ -516,14 +536,14 @@ class CircuitBuilder:
         """Add data qubit initialization based on circuit type."""
         if self.circuit_type in {"tri", "rec"}:
             circuit.append(f"R{self.temp_bdry_type}", self.data_qids)
-            if self.p_reset > 0 and not self.perfect_init_final:
+            if self.p_reset > 0 and not self.perfect_logical_initialization:
                 error_type = "Z_ERROR" if self.temp_bdry_type == "X" else "X_ERROR"
                 circuit.append(error_type, self.data_qids, self.p_reset)
 
         elif self.circuit_type == "rec_stability":
             circuit.append("RX", data_q1s)
             circuit.append("RZ", data_q2s)
-            if self.p_reset > 0 and not self.perfect_init_final:
+            if self.p_reset > 0 and not self.perfect_logical_initialization:
                 circuit.append("Z_ERROR", data_q1s, self.p_reset)
                 circuit.append("X_ERROR", data_q2s, self.p_reset)
             circuit.append("TICK")
@@ -537,7 +557,7 @@ class CircuitBuilder:
                 y_ge=self.y_offset_init_patch
             )["qid"]
             circuit.append(f"R{self.temp_bdry_type}", data_qids_init_patch)
-            if self.p_reset > 0 and not self.perfect_init_final:
+            if self.p_reset > 0 and not self.perfect_logical_initialization:
                 error_type = "Z_ERROR" if self.temp_bdry_type == "X" else "X_ERROR"
                 circuit.append(error_type, data_qids_init_patch, self.p_reset)
 
@@ -604,7 +624,7 @@ class CircuitBuilder:
     ) -> None:
         """Add final data qubit measurements and last detectors."""
         use_last_detectors = True
-        p_meas_final = 0 if self.perfect_init_final else self.p_meas
+        p_meas_final = 0 if self.perfect_logical_measurement else self.p_meas
 
         if self.circuit_type in {"tri", "rec", "growing", "cult+growing"}:
             circuit.append(f"M{self.temp_bdry_type}", self.data_qids, p_meas_final)
@@ -663,7 +683,7 @@ class CircuitBuilder:
     ) -> None:
         """Add final measurements for rec_stability circuits."""
         circuit.append("CX", red_links.ravel())
-        if self.p_cnot > 0 and not self.perfect_init_final:
+        if self.p_cnot > 0 and not self.perfect_logical_measurement:
             circuit.append("DEPOLARIZE2", red_links.ravel(), self.p_cnot)
 
         circuit.append("TICK")
