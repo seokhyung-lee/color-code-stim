@@ -23,6 +23,7 @@ from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit
 from .dem_utils.dem_decomp import DemDecomp
 from .dem_utils.dem_manager import DemManager
+from .noise_model import NoiseModel
 from .simulation import Simulator
 from .stim_utils import (
     dem_to_parity_check,
@@ -77,6 +78,7 @@ class ColorCode:
         d2: int = None,
         cnot_schedule: Union[str, List[int]] = "tri_optimal",
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
+        noise_model: Optional[NoiseModel] = None,
         p_bitflip: float = 0.0,
         p_depol: float = 0.0,
         p_reset: float = 0.0,
@@ -143,26 +145,39 @@ class ColorCode:
             the temporal boundaries are fixed to red for `rec_stability` and `Y` for
             `cult+growing`. For the other circuit types, it is `Z` by default.
 
+        noise_model : NoiseModel, optional
+            Noise model specifying error rates for different operations. If provided,
+            individual noise parameters (p_bitflip, p_depol, etc.) are ignored.
+            If not provided, a NoiseModel is constructed from individual parameters.
+
         p_bitflip : float, default 0
             Bit-flip noise on every data qubit at the start of each round.
+            Ignored if noise_model is provided.
         p_depol : float, default 0
             Depolarizing noise on every data qubit at the start of each round.
+            Ignored if noise_model is provided.
         p_reset : float, default 0
-            Error rate for each reset (producing an orthogonal state)
+            Error rate for each reset (producing an orthogonal state).
+            Ignored if noise_model is provided.
         p_meas : float, default 0
-            Error rate for each measurement (flipped measurement outcome)
+            Error rate for each measurement (flipped measurement outcome).
+            Ignored if noise_model is provided.
         p_cnot : float, default 0
-            Two-qubit depolarizing noise rate for each CNOT gate
+            Two-qubit depolarizing noise rate for each CNOT gate.
+            Ignored if noise_model is provided.
         p_idle : float, default 0
-            Single-qubit depolarizing noise rate for each idle gate
+            Single-qubit depolarizing noise rate for each idle gate.
+            Ignored if noise_model is provided.
         p_circuit : float, optional
-            If given, p_reset = p_meas = p_cnot = p_idle = p_circuit
+            If given, p_reset = p_meas = p_cnot = p_idle = p_circuit.
+            Ignored if noise_model is provided.
         p_cult : float, optional
             Physical error rate during cultivation (only used for 'cult+growing'
             circuits). If not given, `p_cult = p_cnot` is used.
+            Ignored if noise_model is provided.
 
         perfect_init_final : bool, default False
-            Whether to use perfect initialization and final measurement
+            Whether to assume logical initialization and final measurement are noiseless
         comparative_decoding : bool, default False
             Whether to use the comparative decoding technique. If True, observables are
             included as additional detectors and decoding can be done by running the
@@ -200,8 +215,48 @@ class ColorCode:
 
         assert d > 1 and rounds >= 1
 
-        if p_circuit is not None:
-            p_reset = p_meas = p_cnot = p_idle = p_circuit
+        # Handle noise model: use provided NoiseModel or create from individual parameters
+        if noise_model is not None:
+            # Use provided NoiseModel
+            self.noise_model = noise_model
+
+            # For cult+growing, validate that p_circuit is provided and p_bitflip is 0 for backward compatibility
+            if circuit_type in {"cultivation+growing", "cult+growing"}:
+                # We still need p_circuit for the assertion, even though we use noise_model
+                if p_circuit is None:
+                    raise ValueError(
+                        "p_circuit must be provided for cult+growing circuit type"
+                    )
+                if p_bitflip > 0:
+                    raise ValueError(
+                        "p_bitflip must be 0 for cult+growing circuit type"
+                    )
+        else:
+            # Create NoiseModel from individual parameters
+            if p_circuit is not None:
+                p_reset = p_meas = p_cnot = p_idle = p_circuit
+
+            # For cult+growing, validate requirements
+            if circuit_type in {"cultivation+growing", "cult+growing"}:
+                if p_circuit is None:
+                    raise ValueError(
+                        "p_circuit must be provided for cult+growing circuit type"
+                    )
+                if p_bitflip > 0:
+                    raise ValueError(
+                        "p_bitflip must be 0 for cult+growing circuit type"
+                    )
+
+            # Create NoiseModel from individual parameters
+            self.noise_model = NoiseModel(
+                bitflip=p_bitflip,
+                depol=p_depol,
+                reset=p_reset,
+                meas=p_meas,
+                cnot=p_cnot,
+                idle=p_idle,
+                cult=p_cult,
+            )
 
         self.d = d
         d2 = self.d2 = d if d2 is None else d2
@@ -234,7 +289,6 @@ class ColorCode:
             self.num_obs = 1
 
         elif circuit_type in {"cultivation+growing", "cult+growing"}:
-            assert p_circuit is not None and p_bitflip == 0
             assert d2 is not None
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
             self.circuit_type = "cult+growing"
@@ -264,16 +318,6 @@ class ColorCode:
 
         self.cnot_schedule = cnot_schedule
         self.perfect_init_final = perfect_init_final
-        self.noise_model = {
-            "bitflip": p_bitflip,
-            "depol": p_depol,
-            "reset": p_reset,
-            "meas": p_meas,
-            "cnot": p_cnot,
-            "idle": p_idle,
-        }
-        if self.circuit_type == "cult+growing":
-            self.noise_model["cult"] = p_cult if p_cult is not None else p_cnot
         self.comparative_decoding = comparative_decoding
 
         self.exclude_non_essential_pauli_detectors = (

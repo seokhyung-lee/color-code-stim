@@ -32,6 +32,7 @@ pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 
 **Modular Architecture Components:**
 - **CircuitBuilder** (`circuit_builder.py`): Generates quantum circuits for different color code configurations
+- **NoiseModel** (`noise_model.py`): Encapsulates noise parameters with dictionary-like access and validation
 - **DemManager** (`dem_utils/dem_manager.py`): Manages detector error models with caching and decomposition
 - **Simulator** (`simulation/simulator.py`): Handles Monte Carlo simulations and sampling
 - **Decoders** (`decoders/`): Modular decoder implementations with base class architecture
@@ -73,9 +74,19 @@ pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 
 ### Basic Usage Pattern
 ```python
-from color_code_stim import ColorCode
+from color_code_stim import ColorCode, NoiseModel
 
-# Create color code instance
+# Create color code instance with NoiseModel (recommended)
+noise = NoiseModel.uniform_circuit_noise(1e-3)  # Circuit-level noise
+colorcode = ColorCode(
+    d=5,                    # Code distance
+    rounds=5,              # Syndrome extraction rounds
+    circuit_type="tri",    # Circuit type
+    noise_model=noise,     # Unified noise configuration
+    cnot_schedule="tri_optimal"
+)
+
+# Alternative: individual noise parameters (backward compatibility)
 colorcode = ColorCode(
     d=5,                    # Code distance
     rounds=5,              # Syndrome extraction rounds
@@ -86,6 +97,28 @@ colorcode = ColorCode(
 
 # Run simulation
 num_fails, info = colorcode.simulate(shots=10000, full_output=True)
+```
+
+### Noise Model Configuration
+```python
+# Create custom noise model
+noise = NoiseModel(
+    bitflip=0.0,      # Bit-flip errors on data qubits
+    depol=0.001,      # Depolarizing errors on data qubits  
+    reset=0.0005,     # Reset operation errors
+    meas=0.001,       # Measurement errors
+    cnot=0.002,       # CNOT gate errors
+    idle=0.0005,      # Idle operation errors
+    cult=0.002        # Cultivation errors (cult+growing only)
+)
+
+# Access and modify parameters
+print(noise['depol'])        # 0.001
+noise['idle'] = 0.001        # Update parameter
+'cnot' in noise              # True
+
+# Uniform circuit-level noise (replaces p_circuit)
+uniform_noise = NoiseModel.uniform_circuit_noise(0.001)
 ```
 
 ### Comparative Decoding
@@ -114,9 +147,10 @@ num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 - Utility modules: `dem_utils/`, `simulation/`
 - Asset files: Pre-computed cultivation circuits in `assets/cultivation_circuits/`
 
-### Recent Refactoring (Phase 4)
+### Recent Refactoring (Phase 4 & 5)
 The codebase has undergone modular refactoring with:
 - Extracted circuit generation into CircuitBuilder
+- Introduced NoiseModel class for systematic noise parameter handling
 - Moved DEM generation to DEMManager with caching
 - Created modular decoder architecture with BaseDecoder
 - Implemented equivalence testing for performance optimization

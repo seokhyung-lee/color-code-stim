@@ -5,13 +5,14 @@ This module provides the CircuitBuilder class which handles the generation
 of quantum circuits for different color code topologies and configurations.
 """
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 import numpy as np
 import stim
 import igraph as ig
 
 from .config import COLOR_LABEL, CIRCUIT_TYPE, color_to_color_val, get_qubit_coords
 from .cultivation import _reformat_cultivation_circuit
+from .noise_model import NoiseModel
 
 
 class CircuitBuilder:
@@ -30,7 +31,7 @@ class CircuitBuilder:
         circuit_type: CIRCUIT_TYPE,
         cnot_schedule: List[int],
         temp_bdry_type: str,
-        noise_model: Dict[str, float],
+        noise_model: Union[NoiseModel, Dict[str, float]],
         perfect_init_final: bool,
         tanner_graph: ig.Graph,
         qubit_groups: Dict[str, ig.VertexSeq],
@@ -55,8 +56,8 @@ class CircuitBuilder:
             CNOT gate schedule.
         temp_bdry_type : str
             Temporal boundary type.
-        noise_model : Dict[str, float]
-            Noise model.
+        noise_model : NoiseModel or Dict[str, float]
+            Noise model specifying error rates for different operations.
         perfect_init_final : bool
             Whether to use perfect initialization and final measurement.
         tanner_graph : ig.Graph
