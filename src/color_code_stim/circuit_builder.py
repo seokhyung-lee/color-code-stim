@@ -467,22 +467,22 @@ class CircuitBuilder:
         CX_targets = []
         operated_qids = set()
 
-        # Group ancilla qubits by face_x to find pairs
-        face_x_groups = {}
+        # Group ancilla qubits by both face_x and face_y to find pairs
+        face_groups = {}
         for anc_Z_qubit in self.anc_Z_qubits:
-            face_x = anc_Z_qubit["face_x"]
-            if face_x not in face_x_groups:
-                face_x_groups[face_x] = {"Z": None, "X": None}
-            face_x_groups[face_x]["Z"] = anc_Z_qubit
+            face_key = (anc_Z_qubit["face_x"], anc_Z_qubit["face_y"])
+            if face_key not in face_groups:
+                face_groups[face_key] = {"Z": None, "X": None}
+            face_groups[face_key]["Z"] = anc_Z_qubit
 
         for anc_X_qubit in self.anc_X_qubits:
-            face_x = anc_X_qubit["face_x"]
-            if face_x not in face_x_groups:
-                face_x_groups[face_x] = {"Z": None, "X": None}
-            face_x_groups[face_x]["X"] = anc_X_qubit
+            face_key = (anc_X_qubit["face_x"], anc_X_qubit["face_y"])
+            if face_key not in face_groups:
+                face_groups[face_key] = {"Z": None, "X": None}
+            face_groups[face_key]["X"] = anc_X_qubit
 
-        # Add CNOTs from X-type to Z-type ancillas with same face_x
-        for face_x, anc_pair in face_x_groups.items():
+        # Add CNOTs from X-type to Z-type ancillas with same face_x and face_y
+        for face_key, anc_pair in face_groups.items():
             if anc_pair["Z"] is not None and anc_pair["X"] is not None:
                 anc_X_qid = anc_pair["X"].index
                 anc_Z_qid = anc_pair["Z"].index
