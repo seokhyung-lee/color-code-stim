@@ -126,10 +126,7 @@ num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 The repository includes comprehensive test coverage in `tests/test_circuit_generation_simulation.py`:
 
 - **All Circuit Types**: Tests all supported circuit types ("tri", "rec", "rec_stability", "growing", "cult+growing")
-- **Parameter Combinations**: Parametrized testing across all major configuration options:
-  - `temp_bdry_type`: ["X", "Y", "Z"] for applicable circuit types
-  - `superdense_circuit`: [True, False] 
-  - `comparative_decoding`: [True, False] with appropriate circuit type limitations
+- **Parameter Combinations**: Parametrized testing across all major configuration options.
 - **Validation Focus**: Ensures no exceptions are raised during circuit generation and simulation
 - **Implementation Status**: Properly handles unimplemented features (e.g., comparative_decoding for rec_stability)
 
