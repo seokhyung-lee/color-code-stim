@@ -164,24 +164,36 @@ class CircuitBuilder:
         # Validate circuit_type
         supported_types = set(get_args(CIRCUIT_TYPE))
         if self.circuit_type not in supported_types:
-            raise ValueError(f"circuit_type must be one of {supported_types}. Got circuit_type='{self.circuit_type}'")
+            raise ValueError(
+                f"circuit_type must be one of {supported_types}. Got circuit_type='{self.circuit_type}'"
+            )
 
         # Validate cnot_schedule
         if len(self.cnot_schedule) != 12:
-            raise ValueError(f"cnot_schedule must have 12 integers. Got {len(self.cnot_schedule)} elements")
+            raise ValueError(
+                f"cnot_schedule must have 12 integers. Got {len(self.cnot_schedule)} elements"
+            )
         if not all(isinstance(x, int) for x in self.cnot_schedule):
-            raise ValueError(f"cnot_schedule must contain only integers. Got {self.cnot_schedule}")
+            raise ValueError(
+                f"cnot_schedule must contain only integers. Got {self.cnot_schedule}"
+            )
 
         # Validate temp_bdry_type based on circuit_type
         if self.circuit_type in {"tri", "rec", "growing"}:
             if self.temp_bdry_type not in {"X", "Y", "Z"}:
-                raise ValueError(f"'{self.circuit_type}' circuit requires temp_bdry_type in {{'X', 'Y', 'Z'}}. Got temp_bdry_type='{self.temp_bdry_type}'")
+                raise ValueError(
+                    f"'{self.circuit_type}' circuit requires temp_bdry_type in {{'X', 'Y', 'Z'}}. Got temp_bdry_type='{self.temp_bdry_type}'"
+                )
         elif self.circuit_type == "cult+growing":
             if self.temp_bdry_type != "Y":
-                raise ValueError(f"'cult+growing' circuit requires temp_bdry_type='Y'. Got temp_bdry_type='{self.temp_bdry_type}'")
+                raise ValueError(
+                    f"'cult+growing' circuit requires temp_bdry_type='Y'. Got temp_bdry_type='{self.temp_bdry_type}'"
+                )
         elif self.circuit_type == "rec_stability":
             if self.temp_bdry_type != "r":
-                raise ValueError(f"'rec_stability' circuit requires temp_bdry_type='r'. Got temp_bdry_type='{self.temp_bdry_type}'")
+                raise ValueError(
+                    f"'rec_stability' circuit requires temp_bdry_type='r'. Got temp_bdry_type='{self.temp_bdry_type}'"
+                )
 
         # Validate d and d2 constraints
         if self.circuit_type == "tri":
@@ -189,24 +201,51 @@ class CircuitBuilder:
                 raise ValueError(f"'tri' circuit requires d: odd >= 3. Got d={self.d}")
 
         elif self.circuit_type == "rec":
-            if (self.d < 2 or self.d % 2 != 0 or self.d2 is None or 
-                self.d2 < 2 or self.d2 % 2 != 0):
-                raise ValueError(f"'rec' circuit requires d, d2: even >= 2. Got d={self.d}, d2={self.d2}")
+            if (
+                self.d < 2
+                or self.d % 2 != 0
+                or self.d2 is None
+                or self.d2 < 2
+                or self.d2 % 2 != 0
+            ):
+                raise ValueError(
+                    f"'rec' circuit requires d, d2: even >= 2. Got d={self.d}, d2={self.d2}"
+                )
 
         elif self.circuit_type == "rec_stability":
-            if (self.d < 4 or self.d % 2 != 0 or self.d2 is None or 
-                self.d2 < 4 or self.d2 % 2 != 0):
-                raise ValueError(f"'rec_stability' circuit requires d, d2: even >= 4. Got d={self.d}, d2={self.d2}")
+            if (
+                self.d < 4
+                or self.d % 2 != 0
+                or self.d2 is None
+                or self.d2 < 4
+                or self.d2 % 2 != 0
+            ):
+                raise ValueError(
+                    f"'rec_stability' circuit requires d, d2: even >= 4. Got d={self.d}, d2={self.d2}"
+                )
 
         elif self.circuit_type == "growing":
-            if (self.d < 3 or self.d % 2 == 0 or self.d2 is None or 
-                self.d2 % 2 == 0 or self.d2 <= self.d):
-                raise ValueError(f"'growing' circuit requires d, d2: odd, d2 > d >= 3. Got d={self.d}, d2={self.d2}")
+            if (
+                self.d < 3
+                or self.d % 2 == 0
+                or self.d2 is None
+                or self.d2 % 2 == 0
+                or self.d2 <= self.d
+            ):
+                raise ValueError(
+                    f"'growing' circuit requires d, d2: odd, d2 > d >= 3. Got d={self.d}, d2={self.d2}"
+                )
 
         elif self.circuit_type == "cult+growing":
-            if (self.d not in {3, 5} or self.d2 is None or 
-                self.d2 % 2 == 0 or self.d2 <= self.d):
-                raise ValueError(f"'cult+growing' circuit requires d in {{3, 5}}, d2: odd, d2 > d. Got d={self.d}, d2={self.d2}")
+            if (
+                self.d not in {3, 5}
+                or self.d2 is None
+                or self.d2 % 2 == 0
+                or self.d2 <= self.d
+            ):
+                raise ValueError(
+                    f"'cult+growing' circuit requires d in {{3, 5}}, d2: odd, d2 > d. Got d={self.d}, d2={self.d2}"
+                )
 
     def build(self) -> stim.Circuit:
         """
@@ -852,7 +891,7 @@ class CircuitBuilder:
             det_coords[3] = 1
             det_coords = tuple(det_coords)
 
-            anc_Z_name = f"{coords[0]}-{coords[1]}-Z"
+            anc_Z_name = f"{coords[0] - 2}-{coords[1]}-Z"
             anc_Z_qid = self.tanner_graph.vs.find(name=anc_Z_name).index
             j_Z = self.anc_Z_qids.index(anc_Z_qid)
             targets.append(stim.target_rec(-self.num_anc_qubits + j_Z))

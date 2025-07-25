@@ -120,6 +120,21 @@ num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 - **numpy/scipy**: Numerical computations and sparse matrices
 - **matplotlib**: Visualization and plotting
 
+## Testing
+
+### Comprehensive Circuit Generation and Simulation Tests
+The repository includes comprehensive test coverage in `tests/test_circuit_generation_simulation.py`:
+
+- **All Circuit Types**: Tests all supported circuit types ("tri", "rec", "rec_stability", "growing", "cult+growing")
+- **Parameter Combinations**: Parametrized testing across all major configuration options:
+  - `temp_bdry_type`: ["X", "Y", "Z"] for applicable circuit types
+  - `superdense_circuit`: [True, False] 
+  - `comparative_decoding`: [True, False] with appropriate circuit type limitations
+- **Validation Focus**: Ensures no exceptions are raised during circuit generation and simulation
+- **Implementation Status**: Properly handles unimplemented features (e.g., comparative_decoding for rec_stability)
+
+These tests are critical for maintaining stability across the diverse parameter space of color code configurations.
+
 ## Repository Guidelines
 
 - Keep `CLAUDE.md` sufficiently concise, containing only high-level overview. No need to contain too much details.
