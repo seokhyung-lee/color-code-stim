@@ -79,6 +79,12 @@ class ColorCode:
         cnot_schedule: Union[str, List[int]] = "tri_optimal",
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
         noise_model: Optional[NoiseModel] = None,
+        perfect_init_final: bool = False,
+        comparative_decoding: bool = False,
+        exclude_non_essential_pauli_detectors: bool = False,
+        cultivation_circuit: Optional[stim.Circuit] = None,
+        remove_non_edge_like_errors: bool = True,
+        shape: str = None,
         p_bitflip: float = 0.0,
         p_depol: float = 0.0,
         p_reset: float = 0.0,
@@ -87,12 +93,6 @@ class ColorCode:
         p_idle: float = 0.0,
         p_circuit: Optional[float] = None,
         p_cult: Optional[float] = None,
-        perfect_init_final: bool = False,
-        comparative_decoding: bool = False,
-        exclude_non_essential_pauli_detectors: bool = False,
-        cultivation_circuit: Optional[stim.Circuit] = None,
-        remove_non_edge_like_errors: bool = True,
-        shape: str = None,
         _generate_dem: bool = True,
         _decompose_dem: bool = True,
         _benchmarking: bool = False,
@@ -100,6 +100,29 @@ class ColorCode:
         """
         Class for constructing a color code circuit and simulating the
         concatenated MWPM decoder.
+
+        Examples
+        --------
+        Basic usage with NoiseModel:
+
+        >>> from color_code_stim import ColorCode, NoiseModel
+        >>> noise = NoiseModel.uniform_circuit_noise(1e-3)
+        >>> colorcode = ColorCode(d=5, rounds=5, circuit_type="tri", noise_model=noise)
+        >>> num_fails, info = colorcode.simulate(shots=10000, full_output=True)
+
+        Growing operation with custom noise:
+
+        >>> noise = NoiseModel(cnot=0.002, meas=0.001, reset=0.0005, idle=0.001)
+        >>> colorcode = ColorCode(d=3, d2=5, rounds=3, circuit_type="growing", noise_model=noise)
+        >>> det, obs = colorcode.sample(shots=1000)
+
+        Rectangular patch with comparative decoding:
+
+        >>> colorcode = ColorCode(d=4, d2=6, rounds=4, circuit_type="rec",
+        ...                       noise_model=noise, comparative_decoding=True)
+        >>> obs_preds = colorcode.decode(detector_outcomes)
+
+        See `getting_started.ipynb` for more detailed usage.
 
         Parameters
         ----------
@@ -150,6 +173,36 @@ class ColorCode:
             individual noise parameters (p_bitflip, p_depol, etc.) are ignored.
             If not provided, a NoiseModel is constructed from individual parameters.
 
+        perfect_init_final : bool, default False
+            Whether to assume logical initialization and final measurement are noiseless
+        comparative_decoding : bool, default False
+            Whether to use the comparative decoding technique. If True, observables are
+            included as additional detectors and decoding can be done by running the
+            decoder for each logical class and choosing the lowest-weight one. This also
+            provides the logical gap information, which quantifies the reliability of
+            decoding.
+        exclude_non_essential_pauli_detectors : bool, default False
+            If True and `temp_bdry_type` is not "Y", detectors with the Pauli type
+            different from the temporal boundary type (e.g., X-type detectors for
+            `temp_bdry_type="Z"`) are excluded from the circuit. This does not affect the
+            decoding results since X and Z errors are independently decoded in our method
+            and physical errors with the same pauli type as the temporal boundaries do
+            not affect the logical values. If `temp_bdry_type="Y"` or
+            `circuit_type="cult+growing"`, both types of detectors are required for decoding,
+            so this option is ignored.
+        cultivation_circuit: stim.Circuit, optional
+            If given, it is used as the cultivation circuit for cultivation + growing
+            circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not
+            checked internally.
+        remove_non_edge_like_errors: bool, default True
+            Whether to remove error mechanisms that are not edge-like when decomposing
+            the detector error model.
+
+        Parameters (deprecated)
+        ----------
+        shape: str, optional
+            Same as `circuit_type` for backward compatability. If given, it is
+            prioritized over `circuit_type`.
         p_bitflip : float, default 0
             Bit-flip noise on every data qubit at the start of each round.
             Ignored if noise_model is provided.
@@ -176,33 +229,6 @@ class ColorCode:
             circuits). If not given, `p_cult = p_cnot` is used.
             Ignored if noise_model is provided.
 
-        perfect_init_final : bool, default False
-            Whether to assume logical initialization and final measurement are noiseless
-        comparative_decoding : bool, default False
-            Whether to use the comparative decoding technique. If True, observables are
-            included as additional detectors and decoding can be done by running the
-            decoder for each logical class and choosing the lowest-weight one. This also
-            provides the logical gap information, which quantifies the reliability of
-            decoding.
-        exclude_non_essential_pauli_detectors : bool, default False
-            If True and `temp_bdry_type` is not "Y", detectors with the Pauli type
-            different from the temporal boundary type (e.g., X-type detectors for
-            `temp_bdry_type="Z"`) are excluded from the circuit. This does not affect the
-            decoding results since X and Z errors are independently decoded in our method
-            and physical errors with the same pauli type as the temporal boundaries do
-            not affect the logical values. If `temp_bdry_type="Y"` or
-            `circuit_type="cult+growing"`, both types of detectors are required for decoding,
-            so this option is ignored.
-        cultivation_circuit: stim.Circuit, optional
-            If given, it is used as the cultivation circuit for cultivation + growing
-            circuit (`circuit_type == 'cult+growing'`). WARNING: Its validity is not
-            checked internally.
-        remove_non_edge_like_errors: bool, default True
-            Whether to remove error mechanisms that are not edge-like when decomposing
-            the detector error model.
-        shape: str, optional
-            Legacy parameter same as `circuit_type` for backward compatability. If this
-            is given, it is prioritized over `circuit_type`.
         """
         if isinstance(cnot_schedule, str):
             if cnot_schedule in CNOT_SCHEDULES:
