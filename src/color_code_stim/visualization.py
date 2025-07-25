@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Literal, Optional, Tuple
 
 import igraph as ig
 import matplotlib.pyplot as plt
@@ -6,6 +6,8 @@ import numpy as np
 from matplotlib.colors import to_rgb
 from matplotlib.patches import Polygon as mpl_Polygon
 from matplotlib.ticker import AutoLocator
+
+from color_code_stim.config import PAULI_LABEL
 
 # Use TYPE_CHECKING for type hints without runtime imports
 if TYPE_CHECKING:
@@ -400,6 +402,7 @@ def draw_tanner_graph(
     show_axes: bool = False,
     show_lattice: bool = False,
     figsize: Tuple[float, float] = (6, 5),
+    pauli: Literal["Z", "X", "both"] = "X",
     **kwargs,
 ) -> plt.Axes:
     """
@@ -417,6 +420,8 @@ def draw_tanner_graph(
         Whether to show the lattice edges in addition to the tanner graph edges.
     figsize : tuple(float, float), default (6, 5)
         Figure size (width, height) in inches when creating a new figure.
+    pauli_ne: Literal["Z", "X", "both"], default "X"
+        Pauli type of ancillary qubits to include in the graph.
     **kwargs : dict
         Additional keyword arguments to pass to igraph.plot.
 
@@ -430,7 +435,15 @@ def draw_tanner_graph(
 
     tanner_graph = code.tanner_graph
     g: ig.Graph
-    # g = tanner_graph.subgraph(tanner_graph.vs.select(pauli_ne="X"))
+    if pauli == "Z":
+        g = tanner_graph.subgraph(tanner_graph.vs.select(pauli_ne="X"))
+    elif pauli == "X":
+        g = tanner_graph.subgraph(tanner_graph.vs.select(pauli_ne="Z"))
+    elif pauli == "both":
+        g = tanner_graph
+    else:
+        raise ValueError(f"Invalid pauli: {pauli}")
+
     if not show_lattice:
         g = g.subgraph_edges(g.es.select(kind="tanner"))
 
