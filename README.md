@@ -54,7 +54,7 @@ Requires Python >= 3.11
 
 ### For Users (Direct Install)
 ```bash
-pip install color-code-stim
+pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 ```
 
 ### For Development (Editable Install)
