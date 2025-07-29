@@ -12,7 +12,6 @@ import numpy as np
 from .base import BaseDecoder
 from .bp_decoder import BPDecoder
 from .concat_matching_decoder import ConcatMatchingDecoder
-from ..config import COLOR_LABEL
 from ..dem_utils.dem_manager import DemManager
 from ..stim_utils import dem_to_parity_check, remove_obs_from_dem
 

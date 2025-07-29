@@ -1,11 +1,10 @@
 import io
 import math
 import re
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 import stim
-from cairosvg import svg2png
 from scipy.sparse import csc_matrix
 
 

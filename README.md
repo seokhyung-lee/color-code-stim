@@ -1,5 +1,5 @@
 # color-code-stim
-Python package for simulating &amp; decoding 2D color code circuits, used in the paper ["Color code decoder with improved scaling for correcting circuit-level noise"](https://quantum-journal.org/papers/q-2025-01-27-1609/).
+Python package for simulating &amp; decoding 2D color code circuits via the [concatenated MWPM decoder](https://quantum-journal.org/papers/q-2025-01-27-1609).
 
 **Note**: _The [previous version](https://github.com/seokhyung-lee/color-code-stim/tree/53b60e9efb5a691ccdc0a8d1ecab2fb7b76cf301) of this package (used in [our paper](https://quantum-journal.org/papers/q-2025-01-27-1609/)) implemented the bit‑flip noise model incorrectly, leading to an overestimation of the logical failure rate. In that version, each qubit was subjected to bit‑flip noise twice, both before and after the syndrome extraction (see lines 612 and 656 of [`color_code_stim.py`](https://github.com/seokhyung-lee/color-code-stim/blob/53b60e9efb5a691ccdc0a8d1ecab2fb7b76cf301/color_code_stim.py)). This has been corrected in the latest version, where **the estimated bit‑flip noise threshold has been improved from 8.2% (presented in our paper) to 8.6%**, and the logical failure rate has been roughly halved. The circuit‑level results, which form the main focus of the paper, remain unaffected._
 
@@ -15,6 +15,8 @@ It currently supports the following circuit types:
   * `circuit_type="cult+growing"`: Cultivation on a triangular patch with distance `d` (3 or 5), followed by a growing operation to distance `d2` (odd). The cultivation circuits suggested in [arXiv:2409.17595 by Gidney, Shutty, and Jones](https://arxiv.org/abs/2409.17595) (excluding the grafting process) are used to construct this circuit.
 - **Implementation of the Concatenated Minimum-Weight Perfect Matching (MWPM) Decoder for color codes.** <br>
 The concatenated MWPM decoder is a decoder for color codes that functions by concatenation of two MWPM decoders per color, for a total of six matchings. See [Quantum 9, 1609 (2025)](https://doi.org/10.22331/q-2025-01-27-1609) for more details. The MWPM sub-routines of the decoder are implemented using [PyMatching](https://github.com/oscarhiggott/PyMatching) library.
+- **Support of the [superdense syndrome extraction circuit](https://arxiv.org/abs/2312.08813).** <br>
+Set `superdense_circuit=True` when initializing a `ColorCode` instance. By default, it is set to `False` and the space multiplexing circuit is used.
 - **Comparative decoding \& calculation of the logical gap** <br>
 By setting `comparative_decoding=True` (default is `False`) when defining a `ColorCode` object, the concatenated MWPM decoder can be executed multiple times over all distinct logical classes. The minimum-weight correction is chosen as the final correction, and the resulting **logical gap** quantifies its reliability, which can be used for post-selection. This feature was not discussed in our original [paper](https://doi.org/10.22331/q-2025-01-27-1609) but has been added for our following [paper](https://arxiv.org/abs/2409.07707) on color code magic state distillation.
 - **Easy Monte-Carlo simulation to evaluate the decoder performance.** <br>
@@ -52,7 +54,7 @@ Requires Python >= 3.11
 
 ### For Users (Direct Install)
 ```bash
-pip install git+https://github.com/seokhyung-lee/color-code-stim.git
+pip install color-code-stim
 ```
 
 ### For Development (Editable Install)
@@ -65,6 +67,26 @@ pip install -e .
 ## Usage
 
 See the [Getting Started Notebook](getting_started.ipynb).
+
+### Quick Start
+
+```python
+from color_code_stim import ColorCode, NoiseModel
+
+# Create noise model
+noise = NoiseModel.uniform_circuit_noise(1e-3)
+
+# Create color code instance
+colorcode = ColorCode(
+    d=5,                    # Code distance
+    rounds=5,              # Syndrome extraction rounds
+    circuit_type="tri",    # Circuit type
+    noise_model=noise      # Noise configuration
+)
+
+# Run simulation
+num_fails, info = colorcode.simulate(shots=10000, full_output=True)
+```
 
 ## Citation
 If you want to cite this package in an academic work, please cite the [paper](https://doi.org/10.22331/q-2025-01-27-1609):

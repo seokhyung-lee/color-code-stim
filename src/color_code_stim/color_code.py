@@ -23,6 +23,7 @@ from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit
 from .dem_utils.dem_decomp import DemDecomp
 from .dem_utils.dem_manager import DemManager
+from .noise_model import NoiseModel
 from .simulation import Simulator
 from .stim_utils import (
     dem_to_parity_check,
@@ -53,7 +54,7 @@ class ColorCode:
     interface_detector_ids: List[int]
     dems_decomposed: Dict[COLOR_LABEL, DemDecomp]
     perfect_init_final: bool
-    physical_probs: Dict[
+    noise_model: Dict[
         Literal["bitflip", "reset", "meas", "cnot", "idle", "cult"], float
     ]
     comparative_decoding: bool
@@ -76,20 +77,26 @@ class ColorCode:
         circuit_type: str = "tri",
         d2: int = None,
         cnot_schedule: Union[str, List[int]] = "tri_optimal",
+        superdense_circuit: bool = False,
         temp_bdry_type: Optional[Literal["X", "Y", "Z", "x", "y", "z"]] = None,
+        noise_model: Optional[NoiseModel] = None,
+        perfect_logical_initialization: bool = False,
+        perfect_logical_measurement: bool = False,
+        perfect_init_final: bool = False,
+        perfect_first_syndrome_extraction: bool = False,
+        comparative_decoding: bool = False,
+        exclude_non_essential_pauli_detectors: bool = False,
+        cultivation_circuit: Optional[stim.Circuit] = None,
+        remove_non_edge_like_errors: bool = True,
+        shape: str = None,
         p_bitflip: float = 0.0,
+        p_depol: float = 0.0,
         p_reset: float = 0.0,
         p_meas: float = 0.0,
         p_cnot: float = 0.0,
         p_idle: float = 0.0,
         p_circuit: Optional[float] = None,
         p_cult: Optional[float] = None,
-        perfect_init_final: bool = False,
-        comparative_decoding: bool = False,
-        exclude_non_essential_pauli_detectors: bool = False,
-        cultivation_circuit: Optional[stim.Circuit] = None,
-        remove_non_edge_like_errors: bool = True,
-        shape: str = None,
         _generate_dem: bool = True,
         _decompose_dem: bool = True,
         _benchmarking: bool = False,
@@ -97,6 +104,17 @@ class ColorCode:
         """
         Class for constructing a color code circuit and simulating the
         concatenated MWPM decoder.
+
+        Examples
+        --------
+        Triangular patch with uniform circuit-level noise of 1e-3:
+
+        >>> from color_code_stim import ColorCode, NoiseModel
+        >>> noise = NoiseModel.uniform_circuit_noise(1e-3)
+        >>> colorcode = ColorCode(d=5, rounds=5, circuit_type="tri", noise_model=noise)
+        >>> num_fails, info = colorcode.simulate(shots=10000, full_output=True)
+
+        See `getting_started.ipynb` for more detailed usage.
 
         Parameters
         ----------
@@ -106,34 +124,50 @@ class ColorCode:
         rounds : int >= 1
             Number of syndrome extraction rounds.
 
-        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing',
-                'cult+growing'}, default 'tri'
+        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing', 'cult+growing'}, default 'tri'
             Circuit type.
+
             - 'triangle'/'tri': memory experiment of a triangular patch with distance
               `d`.
+
             - 'rectangle'/'rec': memory experiment of a rectangular patch with distance
               `d` and `d2`.
+
             - 'rec_stability': stability experiment of a rectangle-like patch with
               single-type boundaries. `d` and `d2` indicate the size of the patch,
               rather than code distances.
+
             - 'growing': growing operation from a triangular patch with distance `d` to
               a larger triangular patch with distance `d2`. Must be `d2 > d`.
+
             - 'cult+growing': cultivation on a triangular patch with distance `d`,
               followed by a growing operation to distance `d2`. Must be `d2 > d`.
 
         d2 : int >= 3, optional
-            Second code distance required for several circuit types.
-            If not provided, `d2 = d`.
+            Second code distance required for circuit types 'rec'/'rectangle', 'growing',
+            and 'cult+growing'. If not provided, `d2 = d` is used.
 
-        cnot_schedule : {'tri_optimal', 'tri_optimal_reversed'} or list of 12 integers,
+        cnot_schedule : {'tri_optimal', 'tri_optimal_reversed', 'superdense_default'} or list of 12 integers,
                         default 'tri_optimal'
             CNOT schedule.
-            If this is a list of 12 integers, it indicates (a, b, ... l) specifying
-            the CNOT schedule.
-            If this is 'tri_optimal', it is (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2), which
-            is the optimal schedule for the triangular color code.
-            If this is 'tri_optimal_reversed', it is (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
+
+            - List of 12 integers: (a, b, ... l) specifying the CNOT schedule.
+
+            - 'tri_optimal': (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2), which is the optimal
+            schedule for the triangular color code.
+
+            - 'tri_optimal_reversed': (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
             which has the X- and Z-part reversed from 'tri_optimal'.
+
+            - 'superdense_default': (3, 1, 2, 3, 1, 2, 6, 4, 5, 6, 4, 5),
+            which is used for superdense syndrome extraction circuits.
+
+        superdense_circuit : bool, default False
+            Whether to use superdense syndrome extraction circuit. When True, the syndrome
+            extraction follows a 4-step pattern: (1) X-type anc → Z-type anc CNOTs,
+            (2) data → anc CNOTs with spatial routing, (3) anc → data CNOTs, (4) repeat step 1.
+            If True and cnot_schedule is 'tri_optimal', it automatically switches to
+            'superdense_default'.
 
         temp_bdry_type : {'X', 'Y', 'Z', 'x', 'y', 'z'}, optional
             Type of the temporal boundaries, i.e., the reset/measurement basis of
@@ -142,26 +176,24 @@ class ColorCode:
             the temporal boundaries are fixed to red for `rec_stability` and `Y` for
             `cult+growing`. For the other circuit types, it is `Z` by default.
 
-        p_bitflip : float, default 0
-            Bit-flip probability at the start of each round.
-        p_reset : float, default 0
-            Probability of a wrong qubit reset (i.e., producing an
-            orthogonal state).
-        p_meas : float, default 0
-            Probability of a flipped measurement outcome.
-        p_cnot : float, default 0
-            Strength of a two-qubit depolarizing noise channel following
-            each CNOT gate.
-        p_idle : float, default 0
-            Strength of a single-qubit depolarizing noise channel following
-            each idle gate.
-        p_circuit : float, optional
-            If given, p_reset = p_meas = p_cnot = p_idle = p_circuit.
-        p_cult : float, optional
-            Physical error probability during cultivation (only used for 'cult+growing'
-            circuits). If not given, `p_cult = p_circuit`.
+        noise_model : NoiseModel, optional
+            Noise model specifying error rates for different operations. If provided,
+            individual noise parameters (p_bitflip, p_depol, etc.) are ignored.
+            If not provided, a NoiseModel is constructed from individual parameters.
+
+        perfect_logical_initialization : bool, default False
+            Whether logical initialization operations (data qubit reset) are noiseless
+        perfect_logical_measurement : bool, default False
+            Whether logical final measurement operations are noiseless
         perfect_init_final : bool, default False
-            Whether to use perfect initialization and final measurement.
+            If True, sets both perfect_logical_initialization and perfect_logical_measurement
+            to True.
+        perfect_first_syndrome_extraction : bool, default False
+            Whether the first syndrome extraction round is noiseless. Useful when
+            starting from a perfect logical state (together with
+            `perfect_logical_initialization=True`).
+            *Note:* `rounds` still includes this perfect round, so set to `T + 1` where
+            `T` is the number of actual faulty syndrome extraction rounds you want to consider.
         comparative_decoding : bool, default False
             Whether to use the comparative decoding technique. If True, observables are
             included as additional detectors and decoding can be done by running the
@@ -184,10 +216,42 @@ class ColorCode:
         remove_non_edge_like_errors: bool, default True
             Whether to remove error mechanisms that are not edge-like when decomposing
             the detector error model.
+
+        Parameters (legacy for backward compatibility)
+        ----------
         shape: str, optional
-            Legacy parameter same as `circuit_type` for backward compatability. If this
-            is given, it is prioritized over `circuit_type`.
+            Same as `circuit_type`. If given, prioritized over `circuit_type`.
+        p_bitflip : float, default 0
+            Bit-flip noise on every data qubit at the start of each round.
+            Ignored if noise_model is provided.
+        p_depol : float, default 0
+            Depolarizing noise on every data qubit at the start of each round.
+            Ignored if noise_model is provided.
+        p_reset : float, default 0
+            Error rate for each reset (producing an orthogonal state).
+            Ignored if noise_model is provided.
+        p_meas : float, default 0
+            Error rate for each measurement (flipped measurement outcome).
+            Ignored if noise_model is provided.
+        p_cnot : float, default 0
+            Two-qubit depolarizing noise rate for each CNOT gate.
+            Ignored if noise_model is provided.
+        p_idle : float, default 0
+            Single-qubit depolarizing noise rate for each idle gate.
+            Ignored if noise_model is provided.
+        p_circuit : float, optional
+            If given, p_reset = p_meas = p_cnot = p_idle = p_circuit.
+            Ignored if noise_model is provided.
+        p_cult : float, optional
+            Physical error rate during cultivation (only used for 'cult+growing'
+            circuits). If not given, `p_cult = p_cnot` is used.
+            Ignored if noise_model is provided.
+
         """
+        # Automatic cnot_schedule selection for superdense circuits
+        if superdense_circuit and cnot_schedule == "tri_optimal":
+            cnot_schedule = "superdense_default"
+
         if isinstance(cnot_schedule, str):
             if cnot_schedule in CNOT_SCHEDULES:
                 cnot_schedule = CNOT_SCHEDULES[cnot_schedule]
@@ -199,8 +263,36 @@ class ColorCode:
 
         assert d > 1 and rounds >= 1
 
-        if p_circuit is not None:
-            p_reset = p_meas = p_cnot = p_idle = p_circuit
+        # Handle noise model: use provided NoiseModel or create from individual parameters
+        if noise_model is not None:
+            # Use provided NoiseModel
+            self.noise_model = noise_model
+        else:
+            # Create NoiseModel from individual parameters
+            if p_circuit is not None:
+                p_reset = p_meas = p_cnot = p_idle = p_circuit
+
+            # For cult+growing, validate requirements
+            if circuit_type in {"cultivation+growing", "cult+growing"}:
+                if p_circuit is None:
+                    raise ValueError(
+                        "p_circuit must be provided for cult+growing circuit type"
+                    )
+                if p_bitflip > 0:
+                    raise ValueError(
+                        "p_bitflip must be 0 for cult+growing circuit type"
+                    )
+
+            # Create NoiseModel from individual parameters
+            self.noise_model = NoiseModel(
+                bitflip=p_bitflip,
+                depol=p_depol,
+                reset=p_reset,
+                meas=p_meas,
+                cnot=p_cnot,
+                idle=p_idle,
+                cult=p_cult,
+            )
 
         self.d = d
         d2 = self.d2 = d if d2 is None else d2
@@ -233,7 +325,6 @@ class ColorCode:
             self.num_obs = 1
 
         elif circuit_type in {"cultivation+growing", "cult+growing"}:
-            assert p_circuit is not None and p_bitflip == 0
             assert d2 is not None
             assert d % 2 == 1 and d2 % 2 == 1 and d2 > d
             self.circuit_type = "cult+growing"
@@ -262,16 +353,18 @@ class ColorCode:
             self.obs_paulis = [temp_bdry_type] * self.num_obs
 
         self.cnot_schedule = cnot_schedule
+        self.superdense_circuit = superdense_circuit
         self.perfect_init_final = perfect_init_final
-        self.physical_probs = {
-            "bitflip": p_bitflip,
-            "reset": p_reset,
-            "meas": p_meas,
-            "cnot": p_cnot,
-            "idle": p_idle,
-        }
-        if self.circuit_type == "cult+growing":
-            self.physical_probs["cult"] = p_cult if p_cult is not None else p_circuit
+
+        # Handle backward compatibility: perfect_init_final sets both initialization and measurement
+        if perfect_init_final:
+            perfect_logical_initialization = True
+            perfect_logical_measurement = True
+
+        self.perfect_logical_initialization = perfect_logical_initialization
+        self.perfect_logical_measurement = perfect_logical_measurement
+        self.perfect_first_syndrome_extraction = perfect_first_syndrome_extraction
+
         self.comparative_decoding = comparative_decoding
 
         self.exclude_non_essential_pauli_detectors = (
@@ -286,7 +379,7 @@ class ColorCode:
         if self.circuit_type == "cult+growing":
             if cultivation_circuit is None:
                 cultivation_circuit = _load_cultivation_circuit(
-                    d=d, p=self.physical_probs["cult"]
+                    d=d, p=self.noise_model["cult"]
                 )
 
         else:
@@ -310,9 +403,13 @@ class ColorCode:
             rounds=self.rounds,
             circuit_type=self.circuit_type,
             cnot_schedule=self.cnot_schedule,
+            superdense_circuit=self.superdense_circuit,
             temp_bdry_type=self.temp_bdry_type,
-            physical_probs=self.physical_probs,
+            noise_model=self.noise_model,
             perfect_init_final=self.perfect_init_final,
+            perfect_logical_initialization=self.perfect_logical_initialization,
+            perfect_logical_measurement=self.perfect_logical_measurement,
+            perfect_first_syndrome_extraction=self.perfect_first_syndrome_extraction,
             tanner_graph=self.tanner_graph,
             qubit_groups=self.qubit_groups,
             exclude_non_essential_pauli_detectors=self.exclude_non_essential_pauli_detectors,
@@ -665,9 +762,7 @@ class ColorCode:
                 "errors_to_qubits is only available when rounds = 1."
             )
 
-        if any(
-            prob > 0 for key, prob in self.physical_probs.items() if key != "bitflip"
-        ):
+        if any(prob > 0 for key, prob in self.noise_model.items() if key != "bitflip"):
             raise NotImplementedError(
                 "errors_to_qubits is only available under bit-flip noise "
                 "(only p_bitflip is nonzero)."
@@ -988,7 +1083,7 @@ class ColorCode:
     def _test_attribute_picklability(self) -> Tuple[List[str], List[str]]:
         """
         Test which attributes are picklable and which are not.
-        
+
         Returns
         -------
         picklable : List[str]
@@ -998,10 +1093,10 @@ class ColorCode:
         """
         import pickle
         import io
-        
+
         picklable = []
         non_picklable = []
-        
+
         for attr_name, attr_value in self.__dict__.items():
             try:
                 # Try to pickle the attribute
@@ -1010,7 +1105,7 @@ class ColorCode:
                 picklable.append(attr_name)
             except Exception:
                 non_picklable.append(attr_name)
-        
+
         return picklable, non_picklable
 
     def save(self, path: str):
@@ -1026,31 +1121,29 @@ class ColorCode:
             The file path where the object should be saved.
         """
         data = self.__dict__.copy()
-        
+
         # Known non-picklable attributes based on modular architecture
         known_non_picklable = [
             # igraph objects
             "tanner_graph",  # igraph.Graph
             "qubit_groups",  # Dict[str, ig.VertexSeq]
-            
             # Complex manager and decoder objects (lazy-loaded)
             "_dem_manager",  # DemManager with igraph references
             "_concat_matching_decoder",  # ConcatMatchingDecoder
-            "_bp_decoder",  # BPDecoder 
+            "_bp_decoder",  # BPDecoder
             "_belief_concat_matching_decoder",  # BeliefConcatMatchingDecoder
             "_simulator",  # Simulator
-            
             # Cache that should be reconstructed
             "_bp_inputs",  # Dictionary cache
         ]
-        
+
         # Test remaining attributes for picklability and get dynamic exclusions
         temp_data = {k: v for k, v in data.items() if k not in known_non_picklable}
         _, additional_non_picklable = self._test_remaining_attributes(temp_data)
-        
+
         # Combine known and discovered non-picklable attributes
         all_excluded = known_non_picklable + additional_non_picklable
-        
+
         # Remove non-picklable attributes
         for key in all_excluded:
             if key in data:
@@ -1058,16 +1151,18 @@ class ColorCode:
 
         with open(path, "wb") as f:
             pickle.dump(data, f)
-    
-    def _test_remaining_attributes(self, data_dict: dict) -> Tuple[List[str], List[str]]:
+
+    def _test_remaining_attributes(
+        self, data_dict: dict
+    ) -> Tuple[List[str], List[str]]:
         """
         Test remaining attributes for picklability after excluding known non-picklable ones.
-        
+
         Parameters
         ----------
         data_dict : dict
             Dictionary of attributes to test
-            
+
         Returns
         -------
         picklable : List[str]
@@ -1077,10 +1172,10 @@ class ColorCode:
         """
         import pickle
         import io
-        
+
         picklable = []
         non_picklable = []
-        
+
         for attr_name, attr_value in data_dict.items():
             try:
                 # Try to pickle the attribute
@@ -1089,7 +1184,7 @@ class ColorCode:
                 picklable.append(attr_name)
             except Exception:
                 non_picklable.append(attr_name)
-        
+
         return picklable, non_picklable
 
     @classmethod
@@ -1121,17 +1216,17 @@ class ColorCode:
         try:
             # Step 1: Reconstruct tanner_graph and qubit_groups
             instance._reconstruct_tanner_graph_and_qubit_groups()
-            
+
             # Step 2: Clear lazy-loaded object caches (they will be recreated on demand)
             instance._dem_manager = None
             instance._concat_matching_decoder = None
-            instance._bp_decoder = None  
+            instance._bp_decoder = None
             instance._belief_concat_matching_decoder = None
             instance._simulator = None
-            
+
             # Step 3: Initialize cache
             instance._bp_inputs = {}
-            
+
         except Exception as e:
             print(f"Error during reconstruction: {e}")
             raise
@@ -1141,7 +1236,7 @@ class ColorCode:
     def _reconstruct_tanner_graph_and_qubit_groups(self):
         """
         Reconstruct tanner_graph and qubit_groups using TannerGraphBuilder.
-        
+
         This method recreates the igraph objects that cannot be pickled by using
         the same TannerGraphBuilder that was used during initialization.
         """
@@ -1152,4 +1247,3 @@ class ColorCode:
             d2=self.d2,
         )
         self.tanner_graph, self.qubit_groups = graph_builder.build()
-

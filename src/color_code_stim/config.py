@@ -5,7 +5,7 @@ This module centralizes configuration data, type definitions, and utility functi
 used throughout the color_code_stim package.
 """
 
-from typing import Dict, List, Literal, Tuple, Optional
+from typing import Dict, List, Literal, Tuple
 
 # Type definitions
 PAULI_LABEL = Literal["X", "Y", "Z"]
@@ -19,6 +19,7 @@ CNOT_SCHEDULES: Dict[str, List[int]] = {
     "tri_optimal": [2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2],
     "tri_optimal_reversed": [3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1],
     "LLB": [2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2],  # Alias for tri_optimal
+    "superdense_default": [3, 1, 2, 3, 1, 2, 6, 4, 5, 6, 4, 5],
 }
 
 

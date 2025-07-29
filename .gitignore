@@ -1,7 +1,6 @@
 # Created by https://www.toptal.com/developers/gitignore/api/macos,python,pycharm
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,python,pycharm
 
-notebooks/playground.ipynb
 backup*
 memo.md
 data
@@ -9,6 +8,7 @@ data
 pickled_color_codes
 **/gap_data.pkl
 .claude
+.python-version
 
 ### macOS ###
 # General
