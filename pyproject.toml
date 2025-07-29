@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "color-code-stim"
-version = "0.1.0"
+version = "1.0.0"
 authors = [
     {name = "Seok-Hyung Lee", email = "sh.lee1524@gmail.com"},
 ]
@@ -46,4 +46,17 @@ profile = "black"
 line_length = 88
 
 [tool.pytest]
-testpaths = ["tests"] 
+testpaths = ["tests"]
+
+[tool.bumpver]
+current_version = "1.0.0"
+version_pattern = "MAJOR.MINOR.PATCH"
+commit_message = "bump version {old_version} -> {new_version}"
+commit = true
+tag = true
+push = false
+
+[tool.bumpver.file_patterns]
+"pyproject.toml" = [
+    'version = "{version}"',
+] 
