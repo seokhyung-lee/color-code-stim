@@ -5,7 +5,6 @@ This module tests the integration of the initial_data_qubit_depol parameter
 with the ColorCode class and circuit generation, including timing scenarios.
 """
 
-import pytest
 import stim
 from src.color_code_stim import ColorCode, NoiseModel
 

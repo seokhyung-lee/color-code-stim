@@ -10,7 +10,7 @@ import numpy as np
 import stim
 import igraph as ig
 
-from .config import COLOR_LABEL, CIRCUIT_TYPE, color_to_color_val, get_qubit_coords
+from .config import CIRCUIT_TYPE, color_to_color_val, get_qubit_coords
 from .cultivation import _reformat_cultivation_circuit
 from .noise_model import NoiseModel
 
