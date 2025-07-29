@@ -1,0 +1,59 @@
+site_name: color-code-stim
+site_description: Python package for simulating & decoding 2D color code circuits via the concatenated MWPM decoder
+site_author: Seok-Hyung Lee
+site_url: https://github.com/seokhyung-lee/color-code-stim
+
+repo_name: seokhyung-lee/color-code-stim
+repo_url: https://github.com/seokhyung-lee/color-code-stim
+
+# Configuration
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: blue
+      accent: blue
+
+# Plugins
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: true
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+# Navigation
+nav:
+  - Home: index.md
+  - API Reference:
+    - ColorCode: api/color_code.md
+    - NoiseModel: api/noise_model.md
+    - CircuitBuilder: api/circuit_builder.md
+    - TannerGraphBuilder: api/graph_builder.md
+    - Decoders:
+      - BaseDecoder: api/decoders/base.md
+      - ConcatMatchingDecoder: api/decoders/concat_matching_decoder.md
+      - BPDecoder: api/decoders/bp_decoder.md
+      - BeliefConcatMatchingDecoder: api/decoders/belief_concat_matching_decoder.md
+    - Utilities:
+      - DemManager: api/dem_utils/dem_manager.md
+      - DemDecomp: api/dem_utils/dem_decomp.md
+      - Simulator: api/simulation/simulator.md
+      - Visualization: api/visualization.md
+      - Stim Utilities: api/stim_utils.md

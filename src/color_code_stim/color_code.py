@@ -114,18 +114,6 @@ class ColorCode:
         >>> colorcode = ColorCode(d=5, rounds=5, circuit_type="tri", noise_model=noise)
         >>> num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 
-        Growing operation with custom noise:
-
-        >>> noise = NoiseModel(cnot=0.002, meas=0.001, reset=0.0005, idle=0.001)
-        >>> colorcode = ColorCode(d=3, d2=5, rounds=3, circuit_type="growing", noise_model=noise)
-        >>> det, obs = colorcode.sample(shots=1000)
-
-        Rectangular patch with comparative decoding:
-
-        >>> colorcode = ColorCode(d=4, d2=6, rounds=4, circuit_type="rec",
-        ...                       noise_model=noise, comparative_decoding=True)
-        >>> obs_preds = colorcode.decode(detector_outcomes)
-
         See `getting_started.ipynb` for more detailed usage.
 
         Parameters
@@ -136,18 +124,22 @@ class ColorCode:
         rounds : int >= 1
             Number of syndrome extraction rounds.
 
-        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing',
-                'cult+growing'}, default 'tri'
+        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing', 'cult+growing'}, default 'tri'
             Circuit type.
+
             - 'triangle'/'tri': memory experiment of a triangular patch with distance
               `d`.
+
             - 'rectangle'/'rec': memory experiment of a rectangular patch with distance
               `d` and `d2`.
+
             - 'rec_stability': stability experiment of a rectangle-like patch with
               single-type boundaries. `d` and `d2` indicate the size of the patch,
               rather than code distances.
+
             - 'growing': growing operation from a triangular patch with distance `d` to
               a larger triangular patch with distance `d2`. Must be `d2 > d`.
+
             - 'cult+growing': cultivation on a triangular patch with distance `d`,
               followed by a growing operation to distance `d2`. Must be `d2 > d`.
 
@@ -158,13 +150,16 @@ class ColorCode:
         cnot_schedule : {'tri_optimal', 'tri_optimal_reversed', 'superdense_default'} or list of 12 integers,
                         default 'tri_optimal'
             CNOT schedule.
-            If this is a list of 12 integers, it indicates (a, b, ... l) specifying
-            the CNOT schedule.
-            If this is 'tri_optimal', it is (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2), which
-            is the optimal schedule for the triangular color code.
-            If this is 'tri_optimal_reversed', it is (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
+
+            - List of 12 integers: (a, b, ... l) specifying the CNOT schedule.
+
+            - 'tri_optimal': (2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2), which is the optimal
+            schedule for the triangular color code.
+
+            - 'tri_optimal_reversed': (3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1),
             which has the X- and Z-part reversed from 'tri_optimal'.
-            If this is 'superdense_default', it is (3, 1, 2, 3, 1, 2, 6, 4, 5, 6, 4, 5),
+
+            - 'superdense_default': (3, 1, 2, 3, 1, 2, 6, 4, 5, 6, 4, 5),
             which is used for superdense syndrome extraction circuits.
 
         superdense_circuit : bool, default False
