@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import igraph as ig
 
-from .config import PATCH_TYPE, COLOR_LABEL, CIRCUIT_TYPE
+from .config import PATCH_TYPE, CIRCUIT_TYPE
 
 
 class TannerGraphBuilder:

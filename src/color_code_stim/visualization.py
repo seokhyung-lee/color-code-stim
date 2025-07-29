@@ -7,7 +7,6 @@ from matplotlib.colors import to_rgb
 from matplotlib.patches import Polygon as mpl_Polygon
 from matplotlib.ticker import AutoLocator
 
-from color_code_stim.config import PAULI_LABEL
 
 # Use TYPE_CHECKING for type hints without runtime imports
 if TYPE_CHECKING:

@@ -5,7 +5,7 @@ This module centralizes configuration data, type definitions, and utility functi
 used throughout the color_code_stim package.
 """
 
-from typing import Dict, List, Literal, Tuple, Optional
+from typing import Dict, List, Literal, Tuple
 
 # Type definitions
 PAULI_LABEL = Literal["X", "Y", "Z"]
