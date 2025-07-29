@@ -7,7 +7,6 @@ a clean interface for different decoding strategies.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 

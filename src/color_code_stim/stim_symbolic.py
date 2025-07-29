@@ -1,6 +1,6 @@
 import itertools
 from collections import defaultdict
-from typing import Dict, FrozenSet, List, Literal, Optional, Self, Sequence, Set, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Literal, Optional, Self, Sequence, Set, Tuple
 
 import numpy as np
 import stim
@@ -508,7 +508,7 @@ class _DemSymbolic:
                 # If it's somehow a repeat block, we might want its string representation
                 try:
                     metadata_instructions.append(str(instruction))
-                except:
+                except Exception:
                     print(f"Could not convert {instruction} to string.")
                 continue
 

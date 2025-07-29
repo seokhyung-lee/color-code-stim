@@ -1,5 +1,5 @@
 # color-code-stim
-Python package for simulating &amp; decoding 2D color code circuits, used in the paper ["Color code decoder with improved scaling for correcting circuit-level noise"](https://quantum-journal.org/papers/q-2025-01-27-1609/).
+Python package for simulating &amp; decoding 2D color code circuits via the [concatenated MWPM decoder](https://quantum-journal.org/papers/q-2025-01-27-1609).
 
 **Note**: _The [previous version](https://github.com/seokhyung-lee/color-code-stim/tree/53b60e9efb5a691ccdc0a8d1ecab2fb7b76cf301) of this package (used in [our paper](https://quantum-journal.org/papers/q-2025-01-27-1609/)) implemented the bit‑flip noise model incorrectly, leading to an overestimation of the logical failure rate. In that version, each qubit was subjected to bit‑flip noise twice, both before and after the syndrome extraction (see lines 612 and 656 of [`color_code_stim.py`](https://github.com/seokhyung-lee/color-code-stim/blob/53b60e9efb5a691ccdc0a8d1ecab2fb7b76cf301/color_code_stim.py)). This has been corrected in the latest version, where **the estimated bit‑flip noise threshold has been improved from 8.2% (presented in our paper) to 8.6%**, and the logical failure rate has been roughly halved. The circuit‑level results, which form the main focus of the paper, remain unaffected._
 
@@ -67,6 +67,26 @@ pip install -e .
 ## Usage
 
 See the [Getting Started Notebook](getting_started.ipynb).
+
+### Quick Start
+
+```python
+from color_code_stim import ColorCode, NoiseModel
+
+# Create noise model
+noise = NoiseModel.uniform_circuit_noise(1e-3)
+
+# Create color code instance
+colorcode = ColorCode(
+    d=5,                    # Code distance
+    rounds=5,              # Syndrome extraction rounds
+    circuit_type="tri",    # Circuit type
+    noise_model=noise      # Noise configuration
+)
+
+# Run simulation
+num_fails, info = colorcode.simulate(shots=10000, full_output=True)
+```
 
 ## Citation
 If you want to cite this package in an academic work, please cite the [paper](https://doi.org/10.22331/q-2025-01-27-1609):
