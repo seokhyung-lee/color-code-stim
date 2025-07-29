@@ -10,6 +10,11 @@ pickled_color_codes
 .claude
 .python-version
 
+# main branch only
+CLAUDE.md
+notebooks/
+simulations/
+
 ### macOS ###
 # General
 .DS_Store
