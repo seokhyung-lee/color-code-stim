@@ -66,7 +66,8 @@ pip install -e .
 
 ## Usage
 
-See the [Getting Started Notebook](getting_started.ipynb).
+- [Getting Started Notebook](getting_started.ipynb).
+- [API Reference](https://seokhyung-lee.github.io/color-code-stim/)
 
 ### Quick Start
 

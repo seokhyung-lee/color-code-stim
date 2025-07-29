@@ -419,7 +419,7 @@ def draw_tanner_graph(
         Whether to show the lattice edges in addition to the tanner graph edges.
     figsize : tuple(float, float), default (6, 5)
         Figure size (width, height) in inches when creating a new figure.
-    pauli_ne: Literal["Z", "X", "both"], default "X"
+    pauli: Literal["Z", "X", "both"], default "X"
         Pauli type of ancillary qubits to include in the graph.
     **kwargs : dict
         Additional keyword arguments to pass to igraph.plot.
