@@ -1,24 +1,13 @@
-# .github/workflows/release.yml
-name: release
 on:
   push:
-    tags: ['*.*.*']        # 태그만 트리거
+    tags: ["*.*.*"]
+
 jobs:
-  build-upload:
+  build-publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - run: pip install build
-      - run: python -m build
+      - run: python -m build  # wheel+sdist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_TOKEN }}
-
-  docs:
-    needs: build-upload
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install mkdocs-material mkdocstrings[python]
-      - run: pip install -e .
-      - run: mkdocs gh-deploy --clean --force
