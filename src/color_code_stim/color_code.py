@@ -33,6 +33,21 @@ from .visualization import draw_lattice, draw_tanner_graph
 
 
 class ColorCode:
+    """
+    Class for constructing a color code circuit and simulating the concatenated MWPM decoder.
+
+    Examples
+    --------
+    Triangular patch with uniform circuit-level noise of 1e-3:
+
+    >>> from color_code_stim import ColorCode, NoiseModel
+    >>> noise = NoiseModel.uniform_circuit_noise(1e-3)
+    >>> colorcode = ColorCode(d=5, rounds=5, circuit_type="tri", noise_model=noise)
+    >>> num_fails, info = colorcode.simulate(shots=10000, full_output=True)
+
+    See `getting_started.ipynb` for more detailed usage.
+    """
+
     tanner_graph: ig.Graph
     circuit: stim.Circuit
     d: int
@@ -221,27 +236,35 @@ class ColorCode:
         ----------
         shape: str, optional
             Same as `circuit_type`. If given, prioritized over `circuit_type`.
+
         p_bitflip : float, default 0
             Bit-flip noise on every data qubit at the start of each round.
             Ignored if noise_model is provided.
+
         p_depol : float, default 0
             Depolarizing noise on every data qubit at the start of each round.
             Ignored if noise_model is provided.
+
         p_reset : float, default 0
             Error rate for each reset (producing an orthogonal state).
             Ignored if noise_model is provided.
+
         p_meas : float, default 0
             Error rate for each measurement (flipped measurement outcome).
             Ignored if noise_model is provided.
+
         p_cnot : float, default 0
             Two-qubit depolarizing noise rate for each CNOT gate.
             Ignored if noise_model is provided.
+
         p_idle : float, default 0
             Single-qubit depolarizing noise rate for each idle gate.
             Ignored if noise_model is provided.
+
         p_circuit : float, optional
             If given, p_reset = p_meas = p_cnot = p_idle = p_circuit.
             Ignored if noise_model is provided.
+
         p_cult : float, optional
             Physical error rate during cultivation (only used for 'cult+growing'
             circuits). If not given, `p_cult = p_cnot` is used.
@@ -433,7 +456,7 @@ class ColorCode:
 
     @property
     def dem_manager(self) -> DemManager:
-        """Lazy loading property for DEM Manager."""
+        """Detector error model manager for circuit analysis and decomposition."""
         if self._dem_manager is None:
             if self._generate_dem:
                 self._dem_manager = DemManager(
@@ -452,52 +475,52 @@ class ColorCode:
     # Property delegation for backward compatibility
     @property
     def dem_xz(self) -> stim.DetectorErrorModel:
-        """Delegate to DEM manager."""
+        """Detector error model with X and Z parts separated."""
         return self.dem_manager.dem_xz
 
     @property
     def H(self) -> csc_matrix:
-        """Delegate to DEM manager."""
+        """Parity check matrix derived from the detector error model."""
         return self.dem_manager.H
 
     @property
     def obs_matrix(self) -> csc_matrix:
-        """Delegate to DEM manager."""
+        """Logical observable matrix derived from the detector error model."""
         return self.dem_manager.obs_matrix
 
     @property
     def probs_xz(self) -> np.ndarray:
-        """Delegate to DEM manager."""
+        """Probability values for each error mechanism in the detector error model."""
         return self.dem_manager.probs_xz
 
     @property
     def detector_ids_by_color(self) -> Dict[COLOR_LABEL, List[int]]:
-        """Delegate to DEM manager."""
+        """Mapping of color labels ('r', 'g', 'b') to their corresponding detector IDs."""
         return self.dem_manager.detector_ids_by_color
 
     @property
     def cult_detector_ids(self) -> List[int]:
-        """Delegate to DEM manager."""
+        """List of detector IDs associated with cultivation operations."""
         return self.dem_manager.cult_detector_ids
 
     @property
     def interface_detector_ids(self) -> List[int]:
-        """Delegate to DEM manager."""
+        """List of detector IDs at the interface between cultivation and growing regions."""
         return self.dem_manager.interface_detector_ids
 
     @property
     def detectors_checks_map(self) -> List[Tuple[ig.Vertex, int]]:
-        """Delegate to DEM manager."""
+        """Mapping from detector IDs to their corresponding ancilla qubits and rounds."""
         return self.dem_manager.detectors_checks_map
 
     @property
     def dems_decomposed(self) -> Dict[COLOR_LABEL, DemDecomp]:
-        """Delegate to DEM manager."""
+        """Color-decomposed detector error models for individual MWPM decoding."""
         return self.dem_manager.dems_decomposed
 
     @property
     def concat_matching_decoder(self) -> ConcatMatchingDecoder:
-        """Lazy loading property for concatenated matching decoder."""
+        """Concatenated MWPM decoder."""
         if self._concat_matching_decoder is None:
             self._concat_matching_decoder = ConcatMatchingDecoder(
                 dem_manager=self.dem_manager,
@@ -506,7 +529,7 @@ class ColorCode:
 
     @property
     def bp_decoder(self) -> BPDecoder:
-        """Lazy loading property for belief propagation decoder."""
+        """Belief propagation decoder."""
         if self._bp_decoder is None:
             self._bp_decoder = BPDecoder(
                 dem_manager=self.dem_manager,
@@ -517,7 +540,7 @@ class ColorCode:
 
     @property
     def belief_concat_matching_decoder(self) -> BeliefConcatMatchingDecoder:
-        """Lazy loading property for belief propagation + concatenated matching decoder."""
+        """BP + ConcatMWPM decoder."""
         if self._belief_concat_matching_decoder is None:
             self._belief_concat_matching_decoder = BeliefConcatMatchingDecoder(
                 dem_manager=self.dem_manager,
@@ -530,7 +553,7 @@ class ColorCode:
 
     @property
     def simulator(self) -> Simulator:
-        """Lazy loading property for simulator."""
+        """Quantum circuit simulator for sampling detector and observable outcomes."""
         if self._simulator is None:
             self._simulator = Simulator(
                 circuit=self.circuit,
@@ -587,7 +610,19 @@ class ColorCode:
     def get_decomposed_dems(
         self, color: COLOR_LABEL
     ) -> Tuple[stim.DetectorErrorModel, stim.DetectorErrorModel]:
-        """Delegate to DEM manager."""
+        """
+        Get decomposed detector error models for a specific color.
+
+        Parameters
+        ----------
+        color : COLOR_LABEL
+            Color ('r', 'g', or 'b') for which to get decomposed DEMs
+
+        Returns
+        -------
+        tuple
+            (dem1, dem2) - Stage 1 and stage 2 detector error models
+        """
         return self.dem_manager.get_decomposed_dems(color)
 
     def draw_lattice(
@@ -670,6 +705,7 @@ class ColorCode:
         ax: Optional[plt.Axes] = None,
         show_axes: bool = False,
         show_lattice: bool = False,
+        pauli: Literal["Z", "X", "both"] = "X",
         **kwargs,
     ) -> plt.Axes:
         """
@@ -683,6 +719,8 @@ class ColorCode:
             Whether to show the x- and y-axis.
         show_lattice : bool, default False
             Whether to show the lattice edges in addition to the tanner graph edges.
+        pauli: Literal["Z", "X", "both"], default "X"
+            Pauli type of ancillary qubits to include in the graph.
         **kwargs : dict
             Additional keyword arguments to pass to igraph.plot.
 
@@ -696,6 +734,7 @@ class ColorCode:
             ax=ax,
             show_axes=show_axes,
             show_lattice=show_lattice,
+            pauli=pauli,
             **kwargs,
         )
 
