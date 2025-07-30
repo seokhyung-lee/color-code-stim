@@ -148,7 +148,7 @@ class ColorCode:
         rounds : int >= 1
             Number of syndrome extraction rounds.
 
-        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing', 'cult+growing'}, default 'tri'
+        circuit_type : {'triangle', 'tri', 'rectangle', 'rec', 'rec_stability', 'growing', 'cult+growing', 'sdqc_memory'}, default 'tri'
             Circuit type.
 
             - 'triangle'/'tri': memory experiment of a triangular patch with distance
@@ -166,6 +166,11 @@ class ColorCode:
 
             - 'cult+growing': cultivation on a triangular patch with distance `d`,
               followed by a growing operation to distance `d2`. Must be `d2 > d`.
+
+            - 'sdqc_memory': SDQC triangular patch memory experiment with superdense
+              syndrome extraction and shuttling operations. Requires
+              `superdense_circuit=True`. Behaves like 'tri' with additional shuttling
+              errors on ancilla qubits during syndrome extraction.
 
         d2 : int >= 3, optional
             Second code distance required for circuit types 'rec'/'rectangle', 'growing',
