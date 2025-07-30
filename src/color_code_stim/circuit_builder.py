@@ -1536,24 +1536,23 @@ class CircuitBuilder:
         seg_rate = self.noise_model["shuttling_seg_init"]
         non_seg_rate = self.noise_model["shuttling_non_seg_init"]
 
-        if seg_rate > 0 or non_seg_rate > 0:
-            # Add identity operations followed by depolarizing errors
-            for anc_qid in ancilla_qids:
-                anc_qubit = self.tanner_graph.vs[anc_qid]
-                face_x = anc_qubit["face_x"]
+        # Add identity operations followed by depolarizing errors
+        for anc_qid in ancilla_qids:
+            anc_qubit = self.tanner_graph.vs[anc_qid]
+            face_x = anc_qubit["face_x"]
 
-                # Determine if this face is segmented
-                is_segmented = (
-                    self.set_all_faces_segmented or face_x in self.segmented_faces
-                )
+            # Determine if this face is segmented
+            is_segmented = (
+                self.set_all_faces_segmented or face_x in self.segmented_faces
+            )
 
-                # Add identity operation for shuttling
-                circuit.append("I", [anc_qid])
+            # Add identity operation for shuttling
+            circuit.append("I", [anc_qid])
 
-                # Add appropriate depolarizing error
-                error_rate = seg_rate if is_segmented else non_seg_rate
-                if error_rate > 0:
-                    circuit.append("DEPOLARIZE1", [anc_qid], error_rate)
+            # Add appropriate depolarizing error
+            error_rate = seg_rate if is_segmented else non_seg_rate
+            if error_rate > 0:
+                circuit.append("DEPOLARIZE1", [anc_qid], error_rate)
 
     def _add_sdqc_shuttling_before_final_anc_cnots(
         self, circuit: stim.Circuit, perfect_round: bool = False
@@ -1564,8 +1563,6 @@ class CircuitBuilder:
 
         # Only apply to segmented faces
         seg_rate = self.noise_model["shuttling_seg_final"]
-        if seg_rate <= 0:
-            return
 
         # Get ancilla qubits for segmented faces only
         segmented_anc_qids = []
@@ -1581,9 +1578,9 @@ class CircuitBuilder:
                 segmented_anc_qids.append(anc_qid)
 
         # Add identity operations followed by depolarizing errors for segmented faces
-        for anc_qid in segmented_anc_qids:
-            circuit.append("I", [anc_qid])
-            circuit.append("DEPOLARIZE1", [anc_qid], seg_rate)
+        circuit.append("I", segmented_anc_qids)
+        if seg_rate > 0:
+            circuit.append("DEPOLARIZE1", segmented_anc_qids, seg_rate)
 
     def _add_sdqc_shuttling_before_measurements(
         self, circuit: stim.Circuit, perfect_round: bool = False
@@ -1594,8 +1591,6 @@ class CircuitBuilder:
 
         # Only apply to non-segmented faces
         non_seg_rate = self.noise_model["shuttling_non_seg_final"]
-        if non_seg_rate <= 0:
-            return
 
         # Get ancilla qubits for non-segmented faces only
         non_segmented_anc_qids = []
@@ -1611,6 +1606,6 @@ class CircuitBuilder:
                 non_segmented_anc_qids.append(anc_qid)
 
         # Add identity operations followed by depolarizing errors for non-segmented faces
-        for anc_qid in non_segmented_anc_qids:
-            circuit.append("I", [anc_qid])
-            circuit.append("DEPOLARIZE1", [anc_qid], non_seg_rate)
+        circuit.append("I", non_segmented_anc_qids)
+        if non_seg_rate > 0:
+            circuit.append("DEPOLARIZE1", non_segmented_anc_qids, non_seg_rate)

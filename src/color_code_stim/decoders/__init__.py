@@ -11,4 +11,9 @@ from .concat_matching_decoder import ConcatMatchingDecoder
 from .bp_decoder import BPDecoder
 from .belief_concat_matching_decoder import BeliefConcatMatchingDecoder
 
-__all__ = ["BaseDecoder", "ConcatMatchingDecoder", "BPDecoder", "BeliefConcatMatchingDecoder"]
+__all__ = [
+    "BaseDecoder",
+    "ConcatMatchingDecoder",
+    "BPDecoder",
+    "BeliefConcatMatchingDecoder",
+]

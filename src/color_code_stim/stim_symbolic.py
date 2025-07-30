@@ -1,6 +1,17 @@
 import itertools
 from collections import defaultdict
-from typing import Dict, FrozenSet, Iterator, List, Literal, Optional, Self, Sequence, Set, Tuple
+from typing import (
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Self,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 import numpy as np
 import stim
@@ -88,7 +99,9 @@ class _DemSymbolic:
 
         return len(self._ems)
 
-    def __getitem__(self, key: int | slice) -> _ErrorMechanismSymbolic | List[_ErrorMechanismSymbolic]:
+    def __getitem__(
+        self, key: int | slice
+    ) -> _ErrorMechanismSymbolic | List[_ErrorMechanismSymbolic]:
         """Access error mechanisms by index or slice."""
 
         return self._ems[key]
