@@ -40,7 +40,7 @@ class TannerGraphBuilder:
         self.d2 = d2 or d
 
         # Map circuit types to patch types
-        if circuit_type in {"tri", "growing", "cult+growing"}:
+        if circuit_type in {"tri", "growing", "cult+growing", "sdqc_memory"}:
             self.patch_type: PATCH_TYPE = "tri"
         elif circuit_type == "rec":
             self.patch_type = "rec"

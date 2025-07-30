@@ -46,6 +46,11 @@ class NoiseModel:
         cult: Optional[float] = None,
         initial_data_qubit_depol: float = 0.0,
         depol1_after_cnot: float = 0.0,
+        depol1_on_anc_before_cnot: float = 0.0,
+        shuttling_seg_init: float = 0.0,
+        shuttling_non_seg_init: float = 0.0,
+        shuttling_seg_final: float = 0.0,
+        shuttling_non_seg_final: float = 0.0,
         idle_during_cnot: Optional[float] = None,
         idle_during_meas: Optional[float] = None,
         reset_data: Optional[float] = None,
@@ -85,6 +90,22 @@ class NoiseModel:
             Single-qubit depolarizing noise rate applied to each qubit participating
             in CNOT gates after the gates are applied. If provided and positive,
             DEPOLARIZE1 is added for each qubit involved in the CNOT operations.
+        depol1_on_anc_before_cnot : float, default 0.0
+            Single-qubit depolarizing noise rate applied to ancilla qubits before
+            each CNOT gate between data and ancilla qubits. Applied universally
+            to all circuit types.
+        shuttling_seg_init : float, default 0.0
+            Shuttling error rate for segmented faces, applied after the first
+            CNOT gate between two ancilla qubits (for sdqc_memory circuits).
+        shuttling_non_seg_init : float, default 0.0
+            Shuttling error rate for non-segmented faces, applied after the first
+            CNOT gate between two ancilla qubits (for sdqc_memory circuits).
+        shuttling_seg_final : float, default 0.0
+            Shuttling error rate for segmented faces, applied before the final
+            CNOT gate between two ancilla qubits (for sdqc_memory circuits).
+        shuttling_non_seg_final : float, default 0.0
+            Shuttling error rate for non-segmented faces, applied before the final
+            measurements of ancilla qubits (for sdqc_memory circuits).
         idle_during_cnot : float, optional
             Single-qubit depolarizing noise rate for idle qubits during CNOT operations.
             If None (default), uses the idle parameter. If set to any value (including 0),
@@ -122,6 +143,11 @@ class NoiseModel:
             "idle": float(idle),
             "initial_data_qubit_depol": float(initial_data_qubit_depol),
             "depol1_after_cnot": float(depol1_after_cnot),
+            "depol1_on_anc_before_cnot": float(depol1_on_anc_before_cnot),
+            "shuttling_seg_init": float(shuttling_seg_init),
+            "shuttling_non_seg_init": float(shuttling_non_seg_init),
+            "shuttling_seg_final": float(shuttling_seg_final),
+            "shuttling_non_seg_final": float(shuttling_non_seg_final),
         }
 
         # Handle special parameters that can be None
@@ -201,6 +227,11 @@ class NoiseModel:
             cult=None,  # Will default to cnot when needed
             initial_data_qubit_depol=0.0,  # Not included in circuit-level noise
             depol1_after_cnot=0.0,  # Not included in circuit-level noise
+            depol1_on_anc_before_cnot=0.0,  # Not included in circuit-level noise
+            shuttling_seg_init=0.0,  # Not included in circuit-level noise
+            shuttling_non_seg_init=0.0,  # Not included in circuit-level noise
+            shuttling_seg_final=0.0,  # Not included in circuit-level noise
+            shuttling_non_seg_final=0.0,  # Not included in circuit-level noise
             idle_during_cnot=None,  # Not included in circuit-level noise
             idle_during_meas=None,  # Not included in circuit-level noise
             reset_data=None,  # Will default to reset when needed

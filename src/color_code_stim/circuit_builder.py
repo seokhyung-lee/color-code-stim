@@ -42,6 +42,8 @@ class CircuitBuilder:
         exclude_non_essential_pauli_detectors: bool = False,
         cultivation_circuit: Optional[stim.Circuit] = None,
         comparative_decoding: bool = False,
+        segmented_faces: Optional[List[int]] = None,
+        set_all_faces_segmented: bool = False,
     ):
         """
         Initialize the circuit builder.
@@ -82,6 +84,10 @@ class CircuitBuilder:
             Cultivation circuit for cult+growing.
         comparative_decoding : bool, default False
             Whether to use comparative decoding.
+        segmented_faces : Optional[List[int]], default None
+            List of face_x coordinates that are segmented (for sdqc_memory circuits).
+        set_all_faces_segmented : bool, default False
+            Whether to treat all faces as segmented (for sdqc_memory circuits).
         """
         self.d = d
         self.d2 = d2
@@ -102,6 +108,8 @@ class CircuitBuilder:
         )
         self.cultivation_circuit = cultivation_circuit
         self.comparative_decoding = comparative_decoding
+        self.segmented_faces = segmented_faces if segmented_faces is not None else []
+        self.set_all_faces_segmented = set_all_faces_segmented
 
         # Validate parameters
         self.validate()
@@ -324,7 +332,7 @@ class CircuitBuilder:
             red_links = np.array(red_links).reshape(-1, 2)
             data_q1s = red_links[:, 0]
             data_q2s = red_links[:, 1]
-        elif self.circuit_type in {"tri", "rec"}:
+        elif self.circuit_type in {"tri", "rec", "sdqc_memory"}:
             red_links = data_q1s = data_q2s = None
         elif self.circuit_type in {"growing", "cult+growing"}:
             x_offset_init_patch = 6 * round((self.d2 - self.d) / 2)
@@ -420,6 +428,10 @@ class CircuitBuilder:
                     ),
                 )
 
+            # Add SDQC shuttling before measurements for non-segmented faces
+            if self.circuit_type == "sdqc_memory":
+                self._add_sdqc_shuttling_before_measurements(synd_extr_circuit, skip_noise)
+
             # Add measurements (use specific meas rates or 0 for perfect first round)
             if skip_noise:
                 p_meas_anc_Z = 0
@@ -447,7 +459,8 @@ class CircuitBuilder:
             synd_extr_circuit.append("MRX", self.anc_X_qids, p_meas_anc_X)
 
             # Apply idle noise to data qubits during measurement operations
-            if not skip_noise:
+            # For SDQC circuits: skip idling errors on data qubits during ancilla measurements
+            if not skip_noise and self.circuit_type != "sdqc_memory":
                 idle_rate_meas = self._get_idle_rate_for_context("meas")
                 if idle_rate_meas > 0:
                     synd_extr_circuit.append(
@@ -495,7 +508,10 @@ class CircuitBuilder:
         """
         # Route to superdense version if enabled
         if self.superdense_circuit:
-            return self._build_superdense_syndrome_extraction(perfect_round)
+            if self.circuit_type == "sdqc_memory":
+                return self._build_sdqc_superdense_syndrome_extraction(perfect_round)
+            else:
+                return self._build_superdense_syndrome_extraction(perfect_round)
 
         synd_extr_circuit = stim.Circuit()
 
@@ -504,6 +520,7 @@ class CircuitBuilder:
                 i for i, val in enumerate(self.cnot_schedule) if val == timeslice
             ]
             operated_qids = set()
+            anc_qids_in_cnots = set()  # Collect ancilla qids involved in CNOTs
 
             CX_targets = []
             for target in targets:
@@ -535,11 +552,16 @@ class CircuitBuilder:
                     anc_qid = anc_qubit.index
                     data_qid = data_qubit.index
                     operated_qids.update({anc_qid, data_qid})
+                    anc_qids_in_cnots.add(anc_qid)  # Collect ancilla qid
 
                     CX_target = (
                         [data_qid, anc_qid] if target < 6 else [anc_qid, data_qid]
                     )
                     CX_targets.extend(CX_target)
+
+            # Apply depol1_on_anc_before_cnot to ancilla qubits (universal change)
+            if self.noise_model["depol1_on_anc_before_cnot"] > 0 and not perfect_round and anc_qids_in_cnots:
+                synd_extr_circuit.append("DEPOLARIZE1", list(anc_qids_in_cnots), self.noise_model["depol1_on_anc_before_cnot"])
 
             synd_extr_circuit.append("CX", CX_targets)
             if self.p_cnot > 0 and not perfect_round:
@@ -614,6 +636,68 @@ class CircuitBuilder:
 
         return synd_extr_circuit, z_anc_data_connections
 
+    def _build_sdqc_superdense_syndrome_extraction(
+        self, perfect_round: bool = False
+    ) -> Tuple[stim.Circuit, Dict[int, List[int]]]:
+        """Build the SDQC superdense syndrome extraction circuit with shuttling operations.
+
+        Implements the 4-step superdense pattern with shuttling operations:
+        1. X-type anc → Z-type anc CNOTs (same face_x) + shuttling after for all faces
+        2. Data → anc CNOTs with spatial routing (x < face_x → Z-type, x > face_x → X-type)
+        3. Anc → data CNOTs (reverse of step 2)
+        4. Repeat step 1 with shuttling before (segmented faces only) + measurements + shuttling before measurements (non-segmented faces only)
+
+        Parameters
+        ----------
+        perfect_round : bool, default False
+            If True, skip CNOT and idle errors for a perfect syndrome extraction round.
+
+        Returns
+        -------
+        stim.Circuit
+            The SDQC superdense syndrome extraction circuit.
+        Dict[int, List[int]]
+            Dictionary mapping Z-type ancilla qids to lists of connected data qids.
+        """
+        synd_extr_circuit = stim.Circuit()
+
+        # Track connections between Z-type ancillas and data qubits
+        z_anc_data_connections: Dict[int, List[int]] = {}
+
+        # Step 1: X-type anc → Z-type anc CNOTs (same face_x)
+        self._add_anc_to_anc_cnots(synd_extr_circuit, perfect_round)
+
+        # Add shuttling operations after first ancilla-ancilla CNOT for all faces
+        self._add_sdqc_shuttling_after_first_anc_cnots(synd_extr_circuit, perfect_round)
+
+        # Step 2: Data → anc CNOTs using first half of schedule
+        self._add_data_anc_cnots(
+            synd_extr_circuit,
+            self.cnot_schedule[:6],
+            data_to_anc=True,
+            perfect_round=perfect_round,
+            track_connections=True,
+            connections_dict=z_anc_data_connections,
+        )
+
+        # Step 3: Anc → data CNOTs using second half of schedule
+        self._add_data_anc_cnots(
+            synd_extr_circuit,
+            self.cnot_schedule[6:],
+            data_to_anc=False,
+            perfect_round=perfect_round,
+            track_connections=True,
+            connections_dict=z_anc_data_connections,
+        )
+
+        # Step 4: Add shuttling before final CNOT for segmented faces only
+        self._add_sdqc_shuttling_before_final_anc_cnots(synd_extr_circuit, perfect_round)
+
+        # Step 4: Repeat step 1 (final ancilla-ancilla CNOTs)
+        self._add_anc_to_anc_cnots(synd_extr_circuit, perfect_round)
+
+        return synd_extr_circuit, z_anc_data_connections
+
     def _add_anc_to_anc_cnots(
         self, circuit: stim.Circuit, perfect_round: bool = False
     ) -> None:
@@ -648,14 +732,20 @@ class CircuitBuilder:
             if self.p_cnot > 0 and not perfect_round:
                 circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
 
-            # Apply single-qubit depolarizing noise
-            self._apply_depol1_after_cnot(circuit, CX_targets, perfect_round)
+            # Apply single-qubit depolarizing noise (skip for SDQC circuits - they use shuttling errors)
+            if self.circuit_type != "sdqc_memory":
+                self._apply_depol1_after_cnot(circuit, CX_targets, perfect_round)
 
             # Apply idle noise to non-operated qubits
+            # For SDQC circuits: exclude data qubits during ancilla-ancilla operations
             idle_rate = self._get_idle_rate_for_context("cnot")
             if idle_rate > 0 and not perfect_round:
                 idling_qids = list(self.all_qids_set - operated_qids)
-                circuit.append("DEPOLARIZE1", idling_qids, idle_rate)
+                if self.circuit_type == "sdqc_memory":
+                    # Remove data qubits from idling during ancilla-ancilla operations
+                    idling_qids = [qid for qid in idling_qids if qid not in self.data_qids]
+                if idling_qids:
+                    circuit.append("DEPOLARIZE1", idling_qids, idle_rate)
 
             circuit.append("TICK")
 
@@ -693,6 +783,7 @@ class CircuitBuilder:
         for timeslice in range(1, max(schedule_part) + 1):
             targets = [i for i, val in enumerate(schedule_part) if val == timeslice]
             operated_qids = set()
+            anc_qids_in_cnots = set()  # Collect ancilla qids involved in CNOTs
             CX_targets = []
 
             for target in targets:
@@ -730,6 +821,7 @@ class CircuitBuilder:
                         anc_qid = anc_qubit.index
                         data_qid = data_qubit.index
                         operated_qids.update({anc_qid, data_qid})
+                        anc_qids_in_cnots.add(anc_qid)  # Collect ancilla qid
 
                         # Track connection for classical controlled gates (superdense circuits)
                         if track_connections and connections_dict is not None:
@@ -761,6 +853,7 @@ class CircuitBuilder:
                         anc_qid = anc_qubit.index
                         data_qid = data_qubit.index
                         operated_qids.update({anc_qid, data_qid})
+                        anc_qids_in_cnots.add(anc_qid)  # Collect ancilla qid
 
                         if data_to_anc:
                             CX_target = [data_qid, anc_qid]
@@ -769,6 +862,10 @@ class CircuitBuilder:
                         CX_targets.extend(CX_target)
 
             if CX_targets:
+                # Apply depol1_on_anc_before_cnot to ancilla qubits (universal change)
+                if self.noise_model["depol1_on_anc_before_cnot"] > 0 and not perfect_round and anc_qids_in_cnots:
+                    circuit.append("DEPOLARIZE1", list(anc_qids_in_cnots), self.noise_model["depol1_on_anc_before_cnot"])
+
                 circuit.append("CX", CX_targets)
                 if self.p_cnot > 0 and not perfect_round:
                     circuit.append("DEPOLARIZE2", CX_targets, self.p_cnot)
@@ -851,7 +948,7 @@ class CircuitBuilder:
         self, coords: Tuple[int, int], color: str, pauli: str
     ) -> bool:
         """Check if a detector should exist based on circuit type and position."""
-        if self.circuit_type in {"tri", "rec"}:
+        if self.circuit_type in {"tri", "rec", "sdqc_memory"}:
             return self.temp_bdry_type == pauli
         elif self.circuit_type == "rec_stability":
             return color != "r"
@@ -937,7 +1034,7 @@ class CircuitBuilder:
 
     def _check_y_detector_exists(self, coords: Tuple[int, int], color: str) -> bool:
         """Check if Y-type detector should exist."""
-        if self.circuit_type in {"tri", "rec"}:
+        if self.circuit_type in {"tri", "rec", "sdqc_memory"}:
             return True
         elif self.circuit_type == "rec_stability":
             return color != "r"
@@ -954,7 +1051,7 @@ class CircuitBuilder:
         data_q2s: Optional[np.ndarray],
     ) -> None:
         """Add data qubit initialization based on circuit type."""
-        if self.circuit_type in {"tri", "rec"}:
+        if self.circuit_type in {"tri", "rec", "sdqc_memory"}:
             circuit.append(f"R{self.temp_bdry_type}", self.data_qids)
             reset_rate_data = self._get_reset_rate("data")
             if reset_rate_data > 0 and not self.perfect_logical_initialization:
@@ -1062,7 +1159,7 @@ class CircuitBuilder:
             0 if self.perfect_logical_measurement else self._get_meas_rate("data")
         )
 
-        if self.circuit_type in {"tri", "rec", "growing", "cult+growing"}:
+        if self.circuit_type in {"tri", "rec", "growing", "cult+growing", "sdqc_memory"}:
             circuit.append(f"M{self.temp_bdry_type}", self.data_qids, p_meas_final)
             if use_last_detectors:
                 self._add_last_detectors(circuit)
@@ -1344,10 +1441,10 @@ class CircuitBuilder:
         self, circuit: stim.Circuit, obs_included_lookbacks: Set
     ) -> None:
         """Add logical observables based on circuit type."""
-        if self.circuit_type not in {"tri", "rec", "growing", "cult+growing"}:
+        if self.circuit_type not in {"tri", "rec", "growing", "cult+growing", "sdqc_memory"}:
             return
 
-        if self.circuit_type in {"tri", "growing", "cult+growing"}:
+        if self.circuit_type in {"tri", "growing", "cult+growing", "sdqc_memory"}:
             qubits_logs = [self.tanner_graph.vs.select(obs=True)]
             if self.circuit_type == "tri":
                 bdry_colors = [0]
@@ -1355,6 +1452,8 @@ class CircuitBuilder:
                 bdry_colors = [1]
             elif self.circuit_type == "cult+growing":
                 bdry_colors = [1]
+            elif self.circuit_type == "sdqc_memory":
+                bdry_colors = [0]
         elif self.circuit_type == "rec":
             qubits_log_r = self.tanner_graph.vs.select(obs_r=True)
             qubits_log_g = self.tanner_graph.vs.select(obs_g=True)
@@ -1388,3 +1487,90 @@ class CircuitBuilder:
                     raise ValueError(f"Invalid temp_bdry_type: {self.temp_bdry_type}")
                 coords = (-1, -1, -1, pauli_val, color_val, obs_id)
                 circuit.append("DETECTOR", target, coords)
+
+    def _add_sdqc_shuttling_after_first_anc_cnots(
+        self, circuit: stim.Circuit, perfect_round: bool = False
+    ) -> None:
+        """Add shuttling operations after first ancilla-ancilla CNOTs for all faces in SDQC circuits."""
+        if perfect_round:
+            return
+
+        # Get all ancilla qubits that will undergo shuttling
+        ancilla_qids = self.anc_Z_qids + self.anc_X_qids
+
+        # Determine error rates based on face segmentation
+        seg_rate = self.noise_model["shuttling_seg_init"]
+        non_seg_rate = self.noise_model["shuttling_non_seg_init"]
+
+        if seg_rate > 0 or non_seg_rate > 0:
+            # Add identity operations followed by depolarizing errors
+            for anc_qid in ancilla_qids:
+                anc_qubit = self.tanner_graph.vs[anc_qid]
+                face_x = anc_qubit["face_x"]
+
+                # Determine if this face is segmented
+                is_segmented = self.set_all_faces_segmented or face_x in self.segmented_faces
+
+                # Add identity operation for shuttling
+                circuit.append("I", [anc_qid])
+
+                # Add appropriate depolarizing error
+                error_rate = seg_rate if is_segmented else non_seg_rate
+                if error_rate > 0:
+                    circuit.append("DEPOLARIZE1", [anc_qid], error_rate)
+
+    def _add_sdqc_shuttling_before_final_anc_cnots(
+        self, circuit: stim.Circuit, perfect_round: bool = False
+    ) -> None:
+        """Add shuttling operations before final ancilla-ancilla CNOTs for segmented faces only."""
+        if perfect_round:
+            return
+
+        # Only apply to segmented faces
+        seg_rate = self.noise_model["shuttling_seg_final"]
+        if seg_rate <= 0:
+            return
+
+        # Get ancilla qubits for segmented faces only
+        segmented_anc_qids = []
+        for anc_qid in self.anc_Z_qids + self.anc_X_qids:
+            anc_qubit = self.tanner_graph.vs[anc_qid]
+            face_x = anc_qubit["face_x"]
+
+            # Check if this face is segmented
+            is_segmented = self.set_all_faces_segmented or face_x in self.segmented_faces
+            if is_segmented:
+                segmented_anc_qids.append(anc_qid)
+
+        # Add identity operations followed by depolarizing errors for segmented faces
+        for anc_qid in segmented_anc_qids:
+            circuit.append("I", [anc_qid])
+            circuit.append("DEPOLARIZE1", [anc_qid], seg_rate)
+
+    def _add_sdqc_shuttling_before_measurements(
+        self, circuit: stim.Circuit, perfect_round: bool = False
+    ) -> None:
+        """Add shuttling operations before measurements for non-segmented faces only."""
+        if perfect_round:
+            return
+
+        # Only apply to non-segmented faces
+        non_seg_rate = self.noise_model["shuttling_non_seg_final"]
+        if non_seg_rate <= 0:
+            return
+
+        # Get ancilla qubits for non-segmented faces only
+        non_segmented_anc_qids = []
+        for anc_qid in self.anc_Z_qids + self.anc_X_qids:
+            anc_qubit = self.tanner_graph.vs[anc_qid]
+            face_x = anc_qubit["face_x"]
+
+            # Check if this face is NOT segmented
+            is_segmented = self.set_all_faces_segmented or face_x in self.segmented_faces
+            if not is_segmented:
+                non_segmented_anc_qids.append(anc_qid)
+
+        # Add identity operations followed by depolarizing errors for non-segmented faces
+        for anc_qid in non_segmented_anc_qids:
+            circuit.append("I", [anc_qid])
+            circuit.append("DEPOLARIZE1", [anc_qid], non_seg_rate)

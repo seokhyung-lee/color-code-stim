@@ -123,3 +123,89 @@ class TestCircuitGenerationSimulation:
             # `simulate` is currently not supported for cult+growing circuit type
             # so just check whether DEM can be generated without error
             cc.circuit.detector_error_model()
+
+    @pytest.mark.parametrize("temp_bdry_type", ["X", "Y", "Z"])
+    @pytest.mark.parametrize("comparative_decoding", [True, False])
+    @pytest.mark.parametrize("set_all_faces_segmented", [True, False])
+    def test_sdqc_memory_circuit(self, noise_model, temp_bdry_type, comparative_decoding, set_all_faces_segmented):
+        """Test SDQC memory circuit generation and simulation."""
+        # SDQC circuits require superdense_circuit=True
+        for d in [3, 5, 7]:
+            rounds = 3
+            # Create noise model with shuttling error rates for SDQC
+            sdqc_noise = NoiseModel(
+                cnot=1e-3,
+                meas=1e-3,
+                reset=1e-3,
+                idle=1e-3,
+                shuttling_seg_init=1e-4,
+                shuttling_non_seg_init=1e-4,
+                shuttling_seg_final=1e-4,
+                shuttling_non_seg_final=1e-4,
+                depol1_on_anc_before_cnot=1e-5,
+            )
+            cc = ColorCode(
+                d=d,
+                rounds=rounds,
+                circuit_type="sdqc_memory",
+                superdense_circuit=True,  # Required for SDQC
+                temp_bdry_type=temp_bdry_type,
+                noise_model=sdqc_noise,
+                comparative_decoding=comparative_decoding,
+                set_all_faces_segmented=set_all_faces_segmented,
+            )
+            # Should not raise any exceptions
+            num_fails = cc.simulate(10)
+
+    def test_sdqc_memory_requires_superdense(self, noise_model):
+        """Test that SDQC memory circuit requires superdense_circuit=True."""
+        with pytest.raises(ValueError, match="sdqc_memory circuit type requires superdense_circuit=True"):
+            ColorCode(
+                d=3,
+                rounds=3,
+                circuit_type="sdqc_memory",
+                superdense_circuit=False,  # Should raise error
+                noise_model=noise_model,
+            )
+
+    def test_sdqc_segmentation_rules(self, noise_model):
+        """Test SDQC face segmentation rules for different distances."""
+        from color_code_stim.config import SDQC_SEGMENTATION_RULES
+        
+        for d in [3, 5, 7, 9, 11, 13]:
+            cc = ColorCode(
+                d=d,
+                rounds=3,
+                circuit_type="sdqc_memory",
+                superdense_circuit=True,
+                noise_model=noise_model,
+            )
+            # Check that segmented faces match configuration
+            expected_faces = SDQC_SEGMENTATION_RULES[d]
+            assert cc.segmented_faces == expected_faces
+
+    def test_sdqc_unimplemented_distance(self, noise_model):
+        """Test that SDQC circuits raise NotImplementedError for d>=15."""
+        with pytest.raises(NotImplementedError, match="SDQC circuit with distance d=15 is not implemented"):
+            ColorCode(
+                d=15,
+                rounds=3,
+                circuit_type="sdqc_memory",
+                superdense_circuit=True,
+                noise_model=noise_model,
+                set_all_faces_segmented=False,  # Don't override the distance check
+            )
+
+    def test_sdqc_set_all_faces_segmented_override(self, noise_model):
+        """Test that set_all_faces_segmented=True allows d>=15."""
+        # This should not raise an error
+        cc = ColorCode(
+            d=15,
+            rounds=3,
+            circuit_type="sdqc_memory",
+            superdense_circuit=True,
+            noise_model=noise_model,
+            set_all_faces_segmented=True,  # Override distance check
+        )
+        # Should succeed without error
+        assert cc.circuit_type == "sdqc_memory"

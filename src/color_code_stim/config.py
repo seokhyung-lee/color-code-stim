@@ -10,7 +10,7 @@ from typing import Dict, List, Literal, Tuple
 # Type definitions
 PAULI_LABEL = Literal["X", "Y", "Z"]
 COLOR_LABEL = Literal["r", "g", "b"]
-CIRCUIT_TYPE = Literal["tri", "rec", "rec_stability", "growing", "cult+growing"]
+CIRCUIT_TYPE = Literal["tri", "rec", "rec_stability", "growing", "cult+growing", "sdqc_memory"]
 PATCH_TYPE = Literal["tri", "rec", "rec_stability"]
 
 # CNOT Schedules for triangular color codes
@@ -20,6 +20,17 @@ CNOT_SCHEDULES: Dict[str, List[int]] = {
     "tri_optimal_reversed": [3, 4, 7, 6, 5, 2, 2, 3, 6, 5, 4, 1],
     "LLB": [2, 3, 6, 5, 4, 1, 3, 4, 7, 6, 5, 2],  # Alias for tri_optimal
     "superdense_default": [3, 1, 2, 3, 1, 2, 6, 4, 5, 6, 4, 5],
+}
+
+# SDQC segmentation rules for different code distances
+# Maps distance to list of face_x coordinates that are segmented
+SDQC_SEGMENTATION_RULES: Dict[int, List[int]] = {
+    3: [],  # No segmented faces
+    5: [],  # No segmented faces
+    7: [20],
+    9: [20, 32],
+    11: [20, 32, 44],
+    13: [20, 32, 38, 44, 56],
 }
 
 

@@ -17,7 +17,7 @@ import stim
 from scipy.sparse import csc_matrix
 
 from .circuit_builder import CircuitBuilder
-from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_val_to_color
+from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_val_to_color, SDQC_SEGMENTATION_RULES
 from .decoders import ConcatMatchingDecoder, BPDecoder, BeliefConcatMatchingDecoder
 from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit
@@ -76,6 +76,8 @@ class ColorCode:
     exclude_non_essential_pauli_detectors: bool
     cultivation_circuit: Optional[stim.Circuit]
     remove_non_edge_like_errors: bool
+    set_all_faces_segmented: bool
+    segmented_faces: List[int]
     _benchmarking: bool
     _bp_inputs: Dict[str, Any]
     _dem_manager: Optional[DemManager]
@@ -103,6 +105,7 @@ class ColorCode:
         exclude_non_essential_pauli_detectors: bool = False,
         cultivation_circuit: Optional[stim.Circuit] = None,
         remove_non_edge_like_errors: bool = True,
+        set_all_faces_segmented: bool = False,
         shape: str = None,
         p_bitflip: float = 0.0,
         p_depol: float = 0.0,
@@ -353,6 +356,13 @@ class ColorCode:
             self.circuit_type = "cult+growing"
             self.num_obs = 1
 
+        elif circuit_type == "sdqc_memory":
+            assert d % 2 == 1
+            if not superdense_circuit:
+                raise ValueError("sdqc_memory circuit type requires superdense_circuit=True")
+            self.circuit_type = "sdqc_memory"
+            self.num_obs = 1
+
         else:
             raise ValueError(f"Invalid circuit type: {circuit_type}")
 
@@ -395,6 +405,13 @@ class ColorCode:
         )
 
         self.remove_non_edge_like_errors = remove_non_edge_like_errors
+        self.set_all_faces_segmented = set_all_faces_segmented
+
+        # Determine segmented faces for SDQC circuits
+        if self.circuit_type == "sdqc_memory":
+            self.segmented_faces = self._get_segmented_faces(d, set_all_faces_segmented)
+        else:
+            self.segmented_faces = []
 
         if self.comparative_decoding and self.circuit_type == "rec_stability":
             raise NotImplementedError
@@ -438,6 +455,8 @@ class ColorCode:
             exclude_non_essential_pauli_detectors=self.exclude_non_essential_pauli_detectors,
             cultivation_circuit=self.cultivation_circuit,
             comparative_decoding=self.comparative_decoding,
+            segmented_faces=self.segmented_faces,
+            set_all_faces_segmented=self.set_all_faces_segmented,
         )
         self.circuit = builder.build()
 
@@ -1116,6 +1135,37 @@ class ColorCode:
         )
 
         return result
+
+    def _get_segmented_faces(self, d: int, set_all_faces_segmented: bool) -> List[int]:
+        """
+        Determine which faces are segmented for SDQC circuits based on distance.
+
+        Parameters
+        ----------
+        d : int
+            Code distance.
+        set_all_faces_segmented : bool
+            If True, consider all faces as segmented regardless of distance rules.
+
+        Returns
+        -------
+        List[int]
+            List of face_x coordinates that correspond to segmented faces.
+        """
+        if set_all_faces_segmented:
+            # If all faces are segmented, we need to get all face coordinates
+            # This would need to be determined from the tanner graph, but for now
+            # we'll return an empty list and handle this in the circuit builder
+            return []
+
+        # Use distance-dependent segmentation rules from config
+        if d in SDQC_SEGMENTATION_RULES:
+            return SDQC_SEGMENTATION_RULES[d]
+        else:  # d >= 15 and not in rules
+            raise NotImplementedError(
+                f"SDQC circuit with distance d={d} is not implemented. "
+                "Use set_all_faces_segmented=True to treat all faces as segmented."
+            )
 
     # ----- Save/Load Methods -----
 

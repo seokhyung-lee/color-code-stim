@@ -27,7 +27,7 @@ pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 **ColorCode Class** (`src/color_code_stim/color_code.py`)
 - Main interface for creating and working with color code circuits
 - Handles circuit generation, simulation, and decoding
-- Supports multiple circuit types: "tri", "rec", "rec_stability", "growing", "cult+growing"
+- Supports multiple circuit types: "tri", "rec", "rec_stability", "growing", "cult+growing", "sdqc_memory"
 - Manages tanner graphs, detector error models, and quantum circuits
 
 **Modular Architecture Components:**
@@ -57,6 +57,7 @@ pip install git+https://github.com/seokhyung-lee/color-code-stim.git
 - `rec_stability`: Rectangle-like stability experiment
 - `growing`: Growing operation from distance d to d2 (both odd)
 - `cult+growing`: Cultivation followed by growing (uses circuits from arXiv:2409.17595)
+- `sdqc_memory`: SDQC triangular patch memory with superdense syndrome extraction and shuttling operations
 
 ### Key Data Structures
 
@@ -125,7 +126,7 @@ num_fails, info = colorcode.simulate(shots=10000, full_output=True)
 ### Comprehensive Circuit Generation and Simulation Tests
 The repository includes comprehensive test coverage in `tests/test_circuit_generation_simulation.py`:
 
-- **All Circuit Types**: Tests all supported circuit types ("tri", "rec", "rec_stability", "growing", "cult+growing")
+- **All Circuit Types**: Tests all supported circuit types ("tri", "rec", "rec_stability", "growing", "cult+growing", "sdqc_memory")
 - **Parameter Combinations**: Parametrized testing across all major configuration options.
 - **Validation Focus**: Ensures no exceptions are raised during circuit generation and simulation
 - **Implementation Status**: Properly handles unimplemented features (e.g., comparative_decoding for rec_stability)

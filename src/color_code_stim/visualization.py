@@ -37,6 +37,7 @@ def draw_lattice(
         List[int] | List[Tuple[float, float]] | List[str] | np.ndarray
     ] = None,
     highlight_face_lightness: float = 1,
+    highlight_segmented_faces: bool = False,
     figsize: Tuple[float, float] = (6, 5),
 ) -> plt.Axes:
     """
@@ -85,6 +86,9 @@ def draw_lattice(
         Note that for names, the actual stored name includes a '-Z' suffix.
     highlight_face_lightness : float, default 0.7
         Controls the lightness of highlighted faces. Higher values make colors more vibrant.
+    highlight_segmented_faces : bool, default False
+        If True and the circuit type is 'sdqc_memory', highlight segmented faces.
+        This is equivalent to setting highlight_faces to the segmented faces list.
 
     Returns
     -------
@@ -162,6 +166,23 @@ def draw_lattice(
 
             if found_vid is not None:
                 highlight_indices2.add(found_vid)
+
+    # --- Handle highlight_segmented_faces ---
+    if highlight_segmented_faces and code.circuit_type == "sdqc_memory":
+        # Convert segmented faces to highlight_faces format
+        if highlight_faces is None:
+            highlight_faces = []
+        elif not isinstance(highlight_faces, list):
+            highlight_faces = list(highlight_faces)
+        
+        # Add segmented faces as coordinate tuples (face_x, face_y)
+        for face_x in code.segmented_faces:
+            # Find all Z-type ancillas with this face_x coordinate
+            for anc_qubit in anc_Z_qubits:
+                if anc_qubit["face_x"] == face_x:
+                    face_coords = (anc_qubit["face_x"], anc_qubit["face_y"])
+                    if face_coords not in highlight_faces:
+                        highlight_faces.append(face_coords)
 
     # --- Pre-process highlight_faces ---
     highlight_face_indices = set()
