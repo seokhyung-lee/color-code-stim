@@ -17,7 +17,13 @@ import stim
 from scipy.sparse import csc_matrix
 
 from .circuit_builder import CircuitBuilder
-from .config import CNOT_SCHEDULES, PAULI_LABEL, COLOR_LABEL, color_val_to_color, SDQC_SEGMENTATION_RULES
+from .config import (
+    CNOT_SCHEDULES,
+    PAULI_LABEL,
+    COLOR_LABEL,
+    color_val_to_color,
+    SDQC_SEGMENTATION_RULES,
+)
 from .decoders import ConcatMatchingDecoder, BPDecoder, BeliefConcatMatchingDecoder
 from .graph_builder import TannerGraphBuilder
 from .cultivation import _load_cultivation_circuit
@@ -359,7 +365,9 @@ class ColorCode:
         elif circuit_type == "sdqc_memory":
             assert d % 2 == 1
             if not superdense_circuit:
-                raise ValueError("sdqc_memory circuit type requires superdense_circuit=True")
+                raise ValueError(
+                    "sdqc_memory circuit type requires superdense_circuit=True"
+                )
             self.circuit_type = "sdqc_memory"
             self.num_obs = 1
 

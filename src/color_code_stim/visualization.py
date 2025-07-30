@@ -174,7 +174,7 @@ def draw_lattice(
             highlight_faces = []
         elif not isinstance(highlight_faces, list):
             highlight_faces = list(highlight_faces)
-        
+
         # Add segmented faces as coordinate tuples (face_x, face_y)
         for face_x in code.segmented_faces:
             # Find all Z-type ancillas with this face_x coordinate

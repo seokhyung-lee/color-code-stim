@@ -21,7 +21,9 @@ class TestCircuitGenerationSimulation:
     @pytest.mark.parametrize("temp_bdry_type", ["X", "Y", "Z"])
     @pytest.mark.parametrize("superdense_circuit", [True, False])
     @pytest.mark.parametrize("comparative_decoding", [True, False])
-    def test_tri_circuit(self, noise_model, temp_bdry_type, superdense_circuit, comparative_decoding):
+    def test_tri_circuit(
+        self, noise_model, temp_bdry_type, superdense_circuit, comparative_decoding
+    ):
         """Test triangular circuit generation and simulation."""
         for d in [3, 5]:
             rounds = 3
@@ -40,7 +42,9 @@ class TestCircuitGenerationSimulation:
     @pytest.mark.parametrize("temp_bdry_type", ["X", "Y", "Z"])
     @pytest.mark.parametrize("superdense_circuit", [True, False])
     @pytest.mark.parametrize("comparative_decoding", [True, False])
-    def test_rec_circuit(self, noise_model, temp_bdry_type, superdense_circuit, comparative_decoding):
+    def test_rec_circuit(
+        self, noise_model, temp_bdry_type, superdense_circuit, comparative_decoding
+    ):
         """Test rectangular circuit generation and simulation."""
         configs = [(2, 4), (4, 6)]
         for d, d2 in configs:
@@ -60,12 +64,16 @@ class TestCircuitGenerationSimulation:
 
     @pytest.mark.parametrize("superdense_circuit", [True, False])
     @pytest.mark.parametrize("comparative_decoding", [True, False])
-    def test_rec_stability_circuit(self, noise_model, superdense_circuit, comparative_decoding):
+    def test_rec_stability_circuit(
+        self, noise_model, superdense_circuit, comparative_decoding
+    ):
         """Test rectangular stability circuit generation and simulation."""
         # Skip comparative_decoding=True for rec_stability as it's not implemented yet
-        if comparative_decoding and True:  # circuit_type is "rec_stability" 
-            pytest.skip("comparative_decoding=True not implemented for rec_stability circuit type")
-        
+        if comparative_decoding and True:  # circuit_type is "rec_stability"
+            pytest.skip(
+                "comparative_decoding=True not implemented for rec_stability circuit type"
+            )
+
         configs = [(4, 4), (6, 6)]
         for d, d2 in configs:
             rounds = 3
@@ -85,7 +93,9 @@ class TestCircuitGenerationSimulation:
     @pytest.mark.parametrize("temp_bdry_type", ["X", "Y", "Z"])
     @pytest.mark.parametrize("superdense_circuit", [True, False])
     @pytest.mark.parametrize("comparative_decoding", [True, False])
-    def test_growing_circuit(self, noise_model, temp_bdry_type, superdense_circuit, comparative_decoding):
+    def test_growing_circuit(
+        self, noise_model, temp_bdry_type, superdense_circuit, comparative_decoding
+    ):
         """Test growing circuit generation and simulation."""
         configs = [(3, 5), (5, 7)]
         for d, d2 in configs:
@@ -105,7 +115,9 @@ class TestCircuitGenerationSimulation:
 
     @pytest.mark.parametrize("superdense_circuit", [True, False])
     @pytest.mark.parametrize("comparative_decoding", [True, False])
-    def test_cult_growing_circuit(self, noise_model, superdense_circuit, comparative_decoding):
+    def test_cult_growing_circuit(
+        self, noise_model, superdense_circuit, comparative_decoding
+    ):
         """Test cultivation+growing circuit generation and simulation."""
         configs = [(3, 5), (5, 7)]
         for d, d2 in configs:
@@ -127,7 +139,9 @@ class TestCircuitGenerationSimulation:
     @pytest.mark.parametrize("temp_bdry_type", ["X", "Y", "Z"])
     @pytest.mark.parametrize("comparative_decoding", [True, False])
     @pytest.mark.parametrize("set_all_faces_segmented", [True, False])
-    def test_sdqc_memory_circuit(self, noise_model, temp_bdry_type, comparative_decoding, set_all_faces_segmented):
+    def test_sdqc_memory_circuit(
+        self, noise_model, temp_bdry_type, comparative_decoding, set_all_faces_segmented
+    ):
         """Test SDQC memory circuit generation and simulation."""
         # SDQC circuits require superdense_circuit=True
         for d in [3, 5, 7]:
@@ -159,7 +173,10 @@ class TestCircuitGenerationSimulation:
 
     def test_sdqc_memory_requires_superdense(self, noise_model):
         """Test that SDQC memory circuit requires superdense_circuit=True."""
-        with pytest.raises(ValueError, match="sdqc_memory circuit type requires superdense_circuit=True"):
+        with pytest.raises(
+            ValueError,
+            match="sdqc_memory circuit type requires superdense_circuit=True",
+        ):
             ColorCode(
                 d=3,
                 rounds=3,
@@ -171,7 +188,7 @@ class TestCircuitGenerationSimulation:
     def test_sdqc_segmentation_rules(self, noise_model):
         """Test SDQC face segmentation rules for different distances."""
         from color_code_stim.config import SDQC_SEGMENTATION_RULES
-        
+
         for d in [3, 5, 7, 9, 11, 13]:
             cc = ColorCode(
                 d=d,
@@ -186,7 +203,10 @@ class TestCircuitGenerationSimulation:
 
     def test_sdqc_unimplemented_distance(self, noise_model):
         """Test that SDQC circuits raise NotImplementedError for d>=15."""
-        with pytest.raises(NotImplementedError, match="SDQC circuit with distance d=15 is not implemented"):
+        with pytest.raises(
+            NotImplementedError,
+            match="SDQC circuit with distance d=15 is not implemented",
+        ):
             ColorCode(
                 d=15,
                 rounds=3,

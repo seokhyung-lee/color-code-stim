@@ -10,7 +10,9 @@ from typing import Dict, List, Literal, Tuple
 # Type definitions
 PAULI_LABEL = Literal["X", "Y", "Z"]
 COLOR_LABEL = Literal["r", "g", "b"]
-CIRCUIT_TYPE = Literal["tri", "rec", "rec_stability", "growing", "cult+growing", "sdqc_memory"]
+CIRCUIT_TYPE = Literal[
+    "tri", "rec", "rec_stability", "growing", "cult+growing", "sdqc_memory"
+]
 PATCH_TYPE = Literal["tri", "rec", "rec_stability"]
 
 # CNOT Schedules for triangular color codes
