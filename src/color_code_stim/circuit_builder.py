@@ -298,12 +298,14 @@ class CircuitBuilder:
         circuit += synd_extr_circuits[1] * (self.rounds - 1)
 
         # Add final measurements and detectors
+        # Observables for "rec_stability" are added here
         self._add_final_measurements_and_detectors(
             circuit, red_links, data_q1s, data_q2s
         )
 
         # Add logical observables
-        self._add_logical_observables(circuit, obs_included_lookbacks)
+        if self.circuit_type != "rec_stability":
+            self._add_logical_observables(circuit, obs_included_lookbacks)
 
         return circuit
 
@@ -1469,15 +1471,6 @@ class CircuitBuilder:
         self, circuit: stim.Circuit, obs_included_lookbacks: Set
     ) -> None:
         """Add logical observables based on circuit type."""
-        if self.circuit_type not in {
-            "tri",
-            "rec",
-            "growing",
-            "cult+growing",
-            "sdqc_memory",
-        }:
-            return
-
         if self.circuit_type in {"tri", "growing", "cult+growing", "sdqc_memory"}:
             qubits_logs = [self.tanner_graph.vs.select(obs=True)]
             if self.circuit_type == "tri":
@@ -1493,6 +1486,8 @@ class CircuitBuilder:
             qubits_log_g = self.tanner_graph.vs.select(obs_g=True)
             qubits_logs = [qubits_log_r, qubits_log_g]
             bdry_colors = [1, 0]
+        else:
+            raise ValueError(f"Invalid circuit type: {self.circuit_type}")
 
         for obs_id, qubits_log in enumerate(qubits_logs):
             lookback_inds = [

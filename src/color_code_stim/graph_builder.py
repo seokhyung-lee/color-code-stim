@@ -84,7 +84,7 @@ class TannerGraphBuilder:
 
     def _build_triangular_graph(self) -> None:
         """Build vertices for triangular patch geometry."""
-        if self.circuit_type == "tri":
+        if self.circuit_type in {"tri", "sdqc_memory"}:
             d = self.d
         else:  # growing, cult+growing
             d = self.d2
@@ -117,7 +117,7 @@ class TannerGraphBuilder:
                 if not boundary:
                     boundary = None
 
-                if self.circuit_type in {"tri"}:
+                if self.circuit_type in {"tri", "sdqc_memory"}:
                     obs = boundary in ["r", "rg", "rb"]
                 elif self.circuit_type in {"growing", "cult+growing"}:
                     obs = boundary in ["g", "gb", "rg"]
