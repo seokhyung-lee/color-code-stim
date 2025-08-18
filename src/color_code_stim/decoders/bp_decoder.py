@@ -43,7 +43,6 @@ class BPDecoder(BaseDecoder):
     def __init__(
         self,
         dem_manager: DemManager,
-        comparative_decoding: bool = False,
         cache_inputs: bool = True,
     ):
         """
@@ -53,13 +52,11 @@ class BPDecoder(BaseDecoder):
         ----------
         dem_manager : DEMManager
             Manager providing access to detector error models
-        comparative_decoding : bool, default False
-            Whether to remove observables from DEM before decoding
         cache_inputs : bool, default True
             Whether to cache the parity check matrix and probabilities
         """
         self.dem_manager = dem_manager
-        self.comparative_decoding = comparative_decoding
+        self.comparative_decoding = dem_manager.comparative_decoding
         self.cache_inputs = cache_inputs
         self._cached_inputs: Optional[Dict[str, np.ndarray]] = None
 
@@ -124,7 +121,7 @@ class BPDecoder(BaseDecoder):
                 self._cached_inputs = {"H": H, "p": p}
 
         detector_outcomes = np.asarray(detector_outcomes)
-        
+
         # Filter detector outcomes to match the DEM dimensions when observables are removed
         if self.comparative_decoding:
             expected_detectors = H.shape[0]
@@ -133,8 +130,12 @@ class BPDecoder(BaseDecoder):
                 detector_outcomes = detector_outcomes[..., :expected_detectors]
 
         # Filter kwargs to only include valid BpDecoder parameters
-        bp_kwargs = {k: v for k, v in kwargs.items() if k in ['bp_method', 'schedule', 'ms_scaling_factor', 'bp_method_type']}
-        
+        bp_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k in ["bp_method", "schedule", "ms_scaling_factor", "bp_method_type"]
+        }
+
         if detector_outcomes.ndim == 1:
             # Single sample decoding
             bpd = BpDecoder(H, error_channel=p, max_iter=max_iter, **bp_kwargs)
@@ -182,9 +183,9 @@ class BPDecoder(BaseDecoder):
 
         # Convert DEM to parity check matrix and probabilities
         H, _, p = dem_to_parity_check(dem)
-        
+
         # Convert H to uint8 as required by ldpc.BpDecoder
-        H = H.astype('uint8')
+        H = H.astype("uint8")
 
         return H, p
 

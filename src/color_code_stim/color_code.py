@@ -533,7 +533,6 @@ class ColorCode:
         if self._bp_decoder is None:
             self._bp_decoder = BPDecoder(
                 dem_manager=self.dem_manager,
-                comparative_decoding=self.comparative_decoding,
                 cache_inputs=True,
             )
         return self._bp_decoder
@@ -544,9 +543,6 @@ class ColorCode:
         if self._belief_concat_matching_decoder is None:
             self._belief_concat_matching_decoder = BeliefConcatMatchingDecoder(
                 dem_manager=self.dem_manager,
-                circuit_type=self.circuit_type,
-                num_obs=self.num_obs,
-                comparative_decoding=self.comparative_decoding,
                 bp_cache_inputs=True,
             )
         return self._belief_concat_matching_decoder
